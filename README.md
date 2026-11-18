@@ -2,13 +2,17 @@
 
 Protótipo de MOBA "tipo Dota" para celular, feito em **Godot 4.7** (GDScript, renderer Compatibility).
 
-**Etapa 1 (atual):** 1 lane contra bot — herói controlado por toque/mouse, ataque automático, habilidade ONDA (dano em área), upgrade +FORÇA com ouro, ondas de creeps a cada 30s, 2 torres + base por lado (torres protegidas por camada), herói bot inimigo, níveis/XP, ouro, renascimento, tela de vitória/derrota.
+**Etapa 1.5 (atual): versão 3D** — câmera isométrica, joystick virtual, botão ATACAR, 4 habilidades (NOVA, SALTO, FÚRIA, METEORO no nível 3), heróis e creeps animados (KayKit, CC0), torres e castelos 3D, rio com ponte, luz/sombras.
+
+**Etapa 1 (2D, em `prototipo_2d/`):** 1 lane contra bot — herói controlado por toque/mouse, ataque automático, habilidade ONDA (dano em área), upgrade +FORÇA com ouro, ondas de creeps a cada 30s, 2 torres + base por lado (torres protegidas por camada), herói bot inimigo, níveis/XP, ouro, renascimento, tela de vitória/derrota.
 
 Próximas etapas: mapa completo (3 lanes + selva), mais heróis/habilidades, depois online.
 
 ## Controles
-- Toque/arraste (ou clique/arraste) para mover; toque num inimigo para atacar.
-- **ONDA** (ou Q/Espaço): dano em área. **+FORÇA** (ou W): compra +dano e +vida.
+- Joystick (metade esquerda da tela) ou WASD/setas para mover.
+- ATACAR (ou Espaço); habilidades 1-4; +FORÇA (ou B) compra +dano e +vida.
+
+Arte 3D: KayKit por Kay Lousberg (CC0), ver `assets/LICENSE-KayKit.txt`.
 
 ## Build web
 ```
