@@ -128,6 +128,22 @@ func build_visual(cfg: Dictionary) -> void:
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if shadows else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	if cfg.get("merge", false):
 		game.merge_skinned(model, cfg)
+	if cfg.has("lib"):
+		var ap := AnimationPlayer.new()
+		ap.name = "AnimationPlayer"
+		model.add_child(ap)
+		ap.add_animation_library("", cfg["lib"])
+	if cfg.has("weapon"):
+		var w: Array = cfg["weapon"]
+		var sk: Skeleton3D = model.find_children("*", "Skeleton3D", true, false)[0]
+		var ba := BoneAttachment3D.new()
+		ba.bone_name = w[1]
+		sk.add_child(ba)
+		var wn: Node3D = w[0].instantiate()
+		wn.position = w[2]
+		wn.rotation_degrees = w[3]
+		wn.scale = Vector3.ONE * w[4]
+		ba.add_child(wn)
 	var aps := model.find_children("*", "AnimationPlayer", true, false)
 	if aps.size() > 0:
 		anim = aps[0]

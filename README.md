@@ -21,3 +21,8 @@ godot --headless --export-release "Web" build/web/index.html
 Export sem threads (roda no GitHub Pages sem cabeçalhos COOP/COEP). A versão jogável fica na branch `gh-pages`.
 
 Todos os direitos reservados.
+
+
+## Etapa 1.6
+- Performance no celular: renderer Compatibility, resolução 3D 65% e DPR máx 2 no mobile, sem sombras/glow/luzes pontuais no celular, malhas dos personagens mescladas, pools de creeps e efeitos, física a 30 Hz, HUD em lote.
+- Heróis: Elfo e Orc do pack "Characters - Fantasy Races" da Quaternius (licença QAL: uso em jogos ok, sem redistribuir os arquivos; por isso ficam fora do repositório, em assets/quaternius/, gerados por tools/slim_glb.py). Animações: Universal Animation Library (CC0).

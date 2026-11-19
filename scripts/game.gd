@@ -30,6 +30,7 @@ var autotest := false
 var shot_mode := ""
 var hud_texts: Array = []
 var low_quality := false
+var cam_zoom := 1.0
 var units: Array = []
 var merged_cache := {}
 
@@ -63,10 +64,10 @@ func _ready() -> void:
 
 	player = make_unit(Unit.Kind.HERO, 0, spawn_pos(0), true)
 	player.is_bot = autotest and not ("--afk" in args)
-	player.hero_name = "Mago"
+	player.hero_name = "Elfo"
 	bot = make_unit(Unit.Kind.HERO, 1, spawn_pos(1))
 	bot.is_bot = true
-	bot.hero_name = "Bárbaro"
+	bot.hero_name = "Orc"
 	heroes = [player, bot]
 
 	cam = Camera3D.new()
@@ -108,10 +109,15 @@ func load_configs() -> void:
 	var barb_anims := hero_anims.duplicate()
 	barb_anims["attack"] = "2H_Melee_Attack_Chop"
 	barb_anims["idle"] = "2H_Melee_Idle"
-	cfgs["hero0"] = {"merge": true, "scene": load("res://assets/chars/Mage.glb"), "scale": 1.0,
-		"hide": ["Spellbook", "Spellbook_open", "1H_Wand"], "anims": mage_anims}
-	cfgs["hero1"] = {"merge": true, "scene": load("res://assets/chars/Barbarian.glb"), "scale": 1.05,
-		"hide": ["1H_Axe_Offhand", "Barbarian_Round_Shield", "1H_Axe", "Mug"], "anims": barb_anims}
+	var ual: AnimationLibrary = load("res://assets/anims/ual_lib.res")
+	cfgs["hero0"] = {"merge": true, "scene": load("res://assets/quaternius/Elf_Male.glb"), "scale": 1.7, "lib": ual,
+		"weapon": [load("res://assets/env/staff.gltf"), "hand_r", Vector3(0, 0.05, 0), Vector3(0, 0, 90), 0.75],
+		"anims": {"idle": "Idle", "run": "Jog_Fwd", "attack": "Spell_Simple_Shoot", "death": "Death01",
+			"spin": "Spell_Simple_Shoot", "dash": "Roll", "cheer": "Spell_Simple_Enter", "ult": "Spell_Simple_Enter"}}
+	cfgs["hero1"] = {"merge": true, "scene": load("res://assets/quaternius/Orc_Male.glb"), "scale": 1.8, "lib": ual,
+		"weapon": [load("res://assets/env/axe_2handed.gltf"), "hand_r", Vector3(0, 0.05, 0), Vector3(0, 0, 90), 0.75],
+		"anims": {"idle": "Sword_Idle", "run": "Sprint", "attack": "Sword_Attack", "death": "Death01",
+			"spin": "Sword_Attack", "dash": "Roll", "cheer": "Punch_Cross", "ult": "Sword_Attack"}}
 	cfgs["creep0"] = {"merge": true, "scene": load("res://assets/chars/Knight.glb"), "scale": 0.66,
 		"hide": ["1H_Sword_Offhand", "Badge_Shield", "Rectangle_Shield", "Spike_Shield", "2H_Sword"],
 		"anims": {"idle": "Idle", "run": "Running_A", "attack": "1H_Melee_Attack_Chop", "death": "Death_A"}}
@@ -417,7 +423,7 @@ func update_camera(delta: float) -> void:
 	var goal: Vector3 = player.position if not player.dead else Vector3(spawn_pos(0).x, 0, 0)
 	goal.z = clamp(goal.z, -2.0, 2.0)
 	cam_focus = cam_focus.lerp(goal, clamp(delta * 6.0, 0.0, 1.0))
-	var off := Vector3(0, 14.0, 9.2)
+	var off := Vector3(0, 14.0, 9.2) * cam_zoom
 	var sh := Vector3.ZERO
 	if shake_t > 0:
 		shake_t -= delta
@@ -652,6 +658,8 @@ func restart() -> void:
 
 # ---------------------------------------------------------------- screenshot test
 func setup_shot() -> void:
+	if shot_mode == "close":
+		cam_zoom = 0.4
 	player.set_p2(Vector2(42, 0.5))
 	cam_focus = player.position
 	for i in 2:
@@ -663,6 +671,11 @@ func setup_shot() -> void:
 			o.set_p2(Vector2(base_x + (k % 3) * 0.9, -3.0 + (k % 7) * 1.0))
 			k += 1
 	bot.set_p2(Vector2(50.5, -1.5))
+	if shot_mode == "close":
+		bot.set_p2(Vector2(44.5, 1.0))
+		for o in get_tree().get_nodes_in_group("units"):
+			if o.kind == Unit.Kind.CREEP or o.kind == Unit.Kind.RANGED:
+				o.set_p2(o.p2() + Vector2(0, -3))
 	update_camera(1.0)
 	await get_tree().create_timer(1.2).timeout
 	player.cast(0)
