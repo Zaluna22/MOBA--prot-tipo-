@@ -29,12 +29,19 @@ var game_over := false
 var autotest := false
 var shot_mode := ""
 var hud_texts: Array = []
+var low_quality := false
+var units: Array = []
+var merged_cache := {}
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	var args := OS.get_cmdline_user_args()
 	autotest = "--autotest" in args
+	low_quality = OS.has_feature("web_ios") or OS.has_feature("web_android") or OS.has_feature("mobile") or "--mobile" in args
+	if "--desktop" in args:
+		low_quality = false
+	apply_quality()
 	for a in args:
 		if a.begins_with("--shot="):
 			shot_mode = a.substr(7)
@@ -82,6 +89,16 @@ func _ready() -> void:
 		run_bench()
 
 
+func apply_quality() -> void:
+	var vp := get_viewport()
+	if low_quality:
+		vp.msaa_3d = Viewport.MSAA_DISABLED
+		vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
+		vp.scaling_3d_scale = 0.65
+	else:
+		vp.msaa_3d = Viewport.MSAA_2X
+
+
 func load_configs() -> void:
 	var hero_anims := {"idle": "Idle", "run": "Running_A", "attack": "1H_Melee_Attack_Chop", "death": "Death_A",
 		"spin": "2H_Melee_Attack_Spin", "dash": "Dodge_Forward", "cheer": "Cheer", "ult": "2H_Melee_Attack_Chop"}
@@ -91,19 +108,19 @@ func load_configs() -> void:
 	var barb_anims := hero_anims.duplicate()
 	barb_anims["attack"] = "2H_Melee_Attack_Chop"
 	barb_anims["idle"] = "2H_Melee_Idle"
-	cfgs["hero0"] = {"scene": load("res://assets/chars/Mage.glb"), "scale": 1.0,
+	cfgs["hero0"] = {"merge": true, "scene": load("res://assets/chars/Mage.glb"), "scale": 1.0,
 		"hide": ["Spellbook", "Spellbook_open", "1H_Wand"], "anims": mage_anims}
-	cfgs["hero1"] = {"scene": load("res://assets/chars/Barbarian.glb"), "scale": 1.05,
+	cfgs["hero1"] = {"merge": true, "scene": load("res://assets/chars/Barbarian.glb"), "scale": 1.05,
 		"hide": ["1H_Axe_Offhand", "Barbarian_Round_Shield", "1H_Axe", "Mug"], "anims": barb_anims}
-	cfgs["creep0"] = {"scene": load("res://assets/chars/Knight.glb"), "scale": 0.66,
+	cfgs["creep0"] = {"merge": true, "scene": load("res://assets/chars/Knight.glb"), "scale": 0.66,
 		"hide": ["1H_Sword_Offhand", "Badge_Shield", "Rectangle_Shield", "Spike_Shield", "2H_Sword"],
 		"anims": {"idle": "Idle", "run": "Running_A", "attack": "1H_Melee_Attack_Chop", "death": "Death_A"}}
-	cfgs["creep1"] = {"scene": load("res://assets/chars/Skeleton_Minion.glb"), "scale": 0.74, "hide": [],
+	cfgs["creep1"] = {"merge": true, "scene": load("res://assets/chars/Skeleton_Minion.glb"), "scale": 0.74, "hide": [],
 		"anims": {"idle": "Idle", "run": "Running_A", "attack": "Unarmed_Melee_Attack_Punch_A", "death": "Death_A"}}
-	cfgs["ranged0"] = {"scene": load("res://assets/chars/Rogue.glb"), "scale": 0.66,
+	cfgs["ranged0"] = {"merge": true, "scene": load("res://assets/chars/Rogue.glb"), "scale": 0.66,
 		"hide": ["Knife", "Knife_Offhand", "2H_Crossbow", "Throwable"],
 		"anims": {"idle": "Idle", "run": "Running_A", "attack": "1H_Ranged_Shoot", "death": "Death_A"}}
-	cfgs["ranged1"] = {"scene": load("res://assets/chars/Skeleton_Mage.glb"), "scale": 0.72, "hide": [],
+	cfgs["ranged1"] = {"merge": true, "scene": load("res://assets/chars/Skeleton_Mage.glb"), "scale": 0.72, "hide": [],
 		"anims": {"idle": "Idle", "run": "Running_A", "attack": "Spellcast_Shoot", "death": "Death_A"}}
 	cfgs["tower0"] = {"scene": load("res://assets/env/building_tower_A_blue.gltf"), "scale": 3.1}
 	cfgs["tower1"] = {"scene": load("res://assets/env/building_tower_A_red.gltf"), "scale": 3.1}
@@ -111,7 +128,25 @@ func load_configs() -> void:
 	cfgs["base1"] = {"scene": load("res://assets/env/building_castle_red.gltf"), "scale": 2.4}
 
 
+var creep_pool := {}
+
+
+func recycle(u) -> void:
+	u.visible = false
+	u.set_physics_process(false)
+	var key: String = ["hero", "creep", "ranged", "tower", "base"][u.kind] + str(u.team)
+	if not creep_pool.has(key):
+		creep_pool[key] = []
+	creep_pool[key].append(u)
+
+
 func make_unit(kind: int, team: int, pos: Vector2, is_player := false):
+	var key0: String = ["hero", "creep", "ranged", "tower", "base"][kind] + str(team)
+	if creep_pool.has(key0) and creep_pool[key0].size() > 0:
+		var r = creep_pool[key0].pop_back()
+		r.position = Vector3(pos.x, 0, pos.y)
+		r.reset_creep()
+		return r
 	var u = Unit.new()
 	u.game = self
 	u.team = team
@@ -175,7 +210,7 @@ func build_world() -> void:
 	env.ambient_light_energy = 0.55
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.tonemap_exposure = 0.95
-	env.glow_enabled = true
+	env.glow_enabled = not low_quality
 	env.glow_intensity = 0.35
 	env.glow_bloom = 0.05
 	env.glow_hdr_threshold = 1.4
@@ -190,7 +225,7 @@ func build_world() -> void:
 	sun.rotation_degrees = Vector3(-52, -38, 0)
 	sun.light_color = Color(1.0, 0.94, 0.82)
 	sun.light_energy = 1.25
-	sun.shadow_enabled = true
+	sun.shadow_enabled = not low_quality
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
 	sun.directional_shadow_max_distance = 45.0
 	sun.shadow_bias = 0.05
@@ -251,13 +286,7 @@ func build_world() -> void:
 			post.material_override = stone
 			post.position = Vector3(px, 0.7, side * (LANE_HALF + 0.5))
 			add_child(post)
-			var torch := OmniLight3D.new()
-			torch.light_color = Color(1.0, 0.6, 0.25)
-			torch.light_energy = 1.4
-			torch.omni_range = 5.0
-			torch.position = post.position + Vector3(0, 1.1, 0)
-			add_child(torch)
-			fx.add_child(_flame(torch.position))
+			fx.add_child(_flame(post.position + Vector3(0, 1.1, 0)))
 	# fountains
 	for team in 2:
 		var fm := MeshInstance3D.new()
@@ -356,6 +385,7 @@ func _physics_process(delta: float) -> void:
 		get_tree().paused = portrait
 	if game_over or (portrait and shot_mode == ""):
 		return
+	refresh_units()
 	game_time += delta
 	wave_timer -= delta
 	if wave_timer <= 0:
@@ -414,14 +444,21 @@ func spawn_wave() -> void:
 		r.lane_offset = 0
 
 
+func refresh_units() -> void:
+	units = get_tree().get_nodes_in_group("units")
+
+
 func separation() -> void:
-	var units := get_tree().get_nodes_in_group("units")
 	var n := units.size()
 	for i in n:
 		var a = units[i]
+		if a.dead:
+			continue
 		var am: bool = a.is_mobile()
 		for j in range(i + 1, n):
 			var b = units[j]
+			if b.dead:
+				continue
 			var bm: bool = b.is_mobile()
 			if not am and not bm:
 				continue
@@ -447,7 +484,7 @@ func separation() -> void:
 func find_target(u, r: float, prefer_hero := false):
 	var best = null
 	var bd := INF
-	for o in get_tree().get_nodes_in_group("units"):
+	for o in units:
 		if o.dead or o.team == u.team or o.invulnerable:
 			continue
 		var d: float = u.p2().distance_to(o.p2()) - o.radius
@@ -461,7 +498,7 @@ func find_target(u, r: float, prefer_hero := false):
 
 func enemies_near(pos: Vector2, team: int, r: float) -> Array:
 	var out: Array = []
-	for o in get_tree().get_nodes_in_group("units"):
+	for o in units:
 		if o.dead or o.team == team or o.invulnerable:
 			continue
 		if pos.distance_to(o.p2()) - o.radius < r:
@@ -471,7 +508,7 @@ func enemies_near(pos: Vector2, team: int, r: float) -> Array:
 
 func allied_creeps_near(pos: Vector2, team: int, r: float) -> int:
 	var n := 0
-	for o in get_tree().get_nodes_in_group("units"):
+	for o in units:
 		if o.dead or o.team != team:
 			continue
 		if (o.kind == Unit.Kind.CREEP or o.kind == Unit.Kind.RANGED) and pos.distance_to(o.p2()) < r:
@@ -483,7 +520,7 @@ func structure_pick(s):
 	var best = null
 	var bd := INF
 	var hero = null
-	for o in get_tree().get_nodes_in_group("units"):
+	for o in units:
 		if o.dead or o.team == s.team or o.invulnerable or not o.is_mobile():
 			continue
 		var d: float = s.p2().distance_to(o.p2()) - o.radius
@@ -519,7 +556,7 @@ func is_unsafe(u, pos: Vector2) -> bool:
 func front_x(team: int) -> float:
 	var d := 1.0 if team == 0 else -1.0
 	var best := -INF
-	for o in get_tree().get_nodes_in_group("units"):
+	for o in units:
 		if o.dead or o.team != team:
 			continue
 		if o.kind == Unit.Kind.CREEP or o.kind == Unit.Kind.RANGED:
@@ -654,6 +691,12 @@ func run_bench() -> void:
 	var calls := 0.0
 	var proc := 0.0
 	var phys := 0.0
+	if "--nohud" in OS.get_cmdline_user_args():
+		hud.visible = false
+	if "--noworld" in OS.get_cmdline_user_args():
+		for c in get_children():
+			if c is MultiMeshInstance3D:
+				c.visible = false
 	while Time.get_ticks_usec() - t0 < 10000000:
 		await get_tree().process_frame
 		frames += 1
@@ -663,3 +706,45 @@ func run_bench() -> void:
 	var secs := (Time.get_ticks_usec() - t0) / 1000000.0
 	print("BENCH fps=%.1f draw_calls=%.0f process_ms=%.2f physics_ms=%.2f units=%d" % [frames / secs, calls / frames, proc / frames * 1000.0, phys / frames * 1000.0, get_tree().get_nodes_in_group("units").size()])
 	get_tree().quit()
+
+
+# ---------------------------------------------------------------- mesh merging (fewer draw calls)
+func merge_skinned(model: Node3D, cfg: Dictionary) -> void:
+	var parts: Array = []
+	for mi in model.find_children("*", "MeshInstance3D", true, false):
+		if mi.skin != null and mi.transform.is_equal_approx(Transform3D()):
+			parts.append(mi)
+	if parts.size() < 2:
+		return
+	var key: String = cfg["scene"].resource_path + str(cfg.get("hide", []))
+	if not merged_cache.has(key):
+		var skin0: Skin = parts[0].skin
+		var by_mat := {}
+		for mi in parts:
+			var sk: Skin = mi.skin
+			if sk.get_bind_count() != skin0.get_bind_count():
+				return
+			for b in sk.get_bind_count():
+				if sk.get_bind_bone(b) != skin0.get_bind_bone(b) or sk.get_bind_name(b) != skin0.get_bind_name(b):
+					return
+			var mat: Material = mi.get_active_material(0)
+			if not by_mat.has(mat):
+				by_mat[mat] = []
+			by_mat[mat].append(mi)
+		var am := ArrayMesh.new()
+		for mat in by_mat:
+			var st := SurfaceTool.new()
+			for mi in by_mat[mat]:
+				for si in mi.mesh.get_surface_count():
+					st.append_from(mi.mesh, si, Transform3D())
+			var arrays := st.commit_to_arrays()
+			am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+			am.surface_set_material(am.get_surface_count() - 1, mat)
+		merged_cache[key] = [am, skin0]
+	var data: Array = merged_cache[key]
+	var first: MeshInstance3D = parts[0]
+	first.mesh = data[0]
+	first.skin = data[1]
+	for i in range(1, parts.size()):
+		parts[i].get_parent().remove_child(parts[i])
+		parts[i].free()

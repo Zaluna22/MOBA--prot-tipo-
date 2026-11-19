@@ -45,12 +45,25 @@ static func glow_mat(c: Color, energy := 1.3) -> StandardMaterial3D:
 	return m
 
 
+var pool: Array = []
+
+
+## Effects reuse pooled MeshInstances (and their materials) instead of
+## allocating new nodes every shot.
 func _spawn(mesh: Mesh, c: Color, energy := 1.3) -> MeshInstance3D:
-	var mi := MeshInstance3D.new()
+	var mi: MeshInstance3D
+	if pool.size() > 0:
+		mi = pool.pop_back()
+		mi.visible = true
+		mi.scale = Vector3.ONE
+		var m: StandardMaterial3D = mi.material_override
+		m.albedo_color = Color(c.r * energy, c.g * energy, c.b * energy, c.a)
+	else:
+		mi = MeshInstance3D.new()
+		mi.material_override = glow_mat(c, energy)
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(mi)
 	mi.mesh = mesh
-	mi.material_override = glow_mat(c, energy)
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(mi)
 	return mi
 
 
@@ -134,7 +147,8 @@ func _process(delta: float) -> void:
 					else:
 						node.position += d.normalized() * step
 		if done:
-			node.queue_free()
+			node.visible = false
+			pool.append(node)
 		else:
 			keep.append(it)
 	items = keep

@@ -155,9 +155,23 @@ func _process(delta: float) -> void:
 	ui.queue_redraw()
 
 
+var text_q: Array = []
+
+
+## Texts are queued and drawn together (all outlines, then all fills) so the
+## renderer can batch them instead of breaking the batch for every label.
 func text(pos: Vector2, s: String, size: int, c := Color.WHITE, align := HORIZONTAL_ALIGNMENT_LEFT, width := -1.0) -> void:
-	ui.draw_string_outline(font, pos, s, align, width, size, max(4, size / 4), Color(0, 0, 0, 0.85 * c.a))
-	ui.draw_string(font, pos, s, align, width, size, c)
+	text_q.append([pos, s, size, c, align, width])
+
+
+func flush_text() -> void:
+	text_q.sort_custom(func(a, b): return a[2] < b[2])
+	for t in text_q:
+		var c: Color = t[3]
+		ui.draw_string_outline(font, t[0], t[1], t[4], t[5], t[2], max(4, t[2] / 4), Color(0, 0, 0, 0.85 * c.a))
+	for t in text_q:
+		ui.draw_string(font, t[0], t[1], t[4], t[5], t[2], t[3])
+	text_q.clear()
 
 
 func ctext(center: Vector2, s: String, size: int, c := Color.WHITE) -> void:
@@ -285,6 +299,7 @@ func _draw_ui() -> void:
 		ctext(Vector2(s.x / 2, s.y * 0.62 - 22), "Joystick à esquerda para mover. ATACAR mira o inimigo mais perto.", 18, Color(1, 1, 1, a))
 		ctext(Vector2(s.x / 2, s.y * 0.62 + 8), "Habilidades: NOVA, SALTO, FÚRIA e METEORO (Nv 3).", 18, Color(1, 1, 1, a))
 		ctext(Vector2(s.x / 2, s.y * 0.62 + 34), "Destrua as torres e o castelo vermelho!", 18, Color(1, 0.85, 0.4, a))
+	flush_text()
 	# --- end screen
 	if end_visible:
 		ui.draw_rect(Rect2(Vector2.ZERO, s), Color(0, 0, 0, 0.72))
@@ -293,12 +308,14 @@ func _draw_ui() -> void:
 		ui.draw_rect(rr, Color(0.2, 0.35, 0.6, 0.95))
 		ui.draw_rect(rr, Color(1, 1, 1, 0.8), false, 3.0)
 		ctext(rr.get_center(), "Jogar de novo", 34, Color.WHITE)
+	flush_text()
 	# --- rotate
 	if is_portrait():
 		ui.draw_rect(Rect2(Vector2.ZERO, s), Color(0.04, 0.06, 0.09, 0.97))
 		ctext(Vector2(s.x / 2, s.y / 2 - 40), "Gire o celular", 44, Color.WHITE)
 		ctext(Vector2(s.x / 2, s.y / 2 + 20), "para a horizontal", 44, Color.WHITE)
 		ui.draw_arc(Vector2(s.x / 2, s.y / 2 + 120), 40, 0.3, TAU - 0.6, 32, Color.WHITE, 5.0)
+	flush_text()
 
 
 func draw_world_bars() -> void:

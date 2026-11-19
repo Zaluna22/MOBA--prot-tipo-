@@ -119,10 +119,15 @@ func build_visual(cfg: Dictionary) -> void:
 	model = scn.instantiate()
 	model.scale = Vector3.ONE * cfg["scale"]
 	add_child(model)
+	var shadows: bool = not game.low_quality and (kind == Kind.HERO or kind == Kind.TOWER or kind == Kind.BASE)
 	for mi in model.find_children("*", "MeshInstance3D", true, false):
 		if mi.name in cfg.get("hide", []):
-			mi.visible = false
-		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+			mi.get_parent().remove_child(mi)
+			mi.free()
+			continue
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if shadows else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	if cfg.get("merge", false):
+		game.merge_skinned(model, cfg)
 	var aps := model.find_children("*", "AnimationPlayer", true, false)
 	if aps.size() > 0:
 		anim = aps[0]
@@ -148,6 +153,8 @@ func build_visual(cfg: Dictionary) -> void:
 	ring.scale = Vector3(rs, 0.3, rs)
 	ring.position.y = 0.05
 	add_child(ring)
+	if kind == Kind.CREEP or kind == Kind.RANGED:
+		ring.visible = false
 	if kind == Kind.TOWER or kind == Kind.BASE:
 		ring.visible = false
 		crystal = MeshInstance3D.new()
@@ -161,12 +168,6 @@ func build_visual(cfg: Dictionary) -> void:
 		crystal.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		crystal.position.y = 7.4 if kind == Kind.TOWER else 10.6
 		add_child(crystal)
-		var l := OmniLight3D.new()
-		l.light_color = team_color()
-		l.light_energy = 1.6
-		l.omni_range = 7.0
-		l.position.y = crystal.position.y
-		add_child(l)
 		range_ring = MeshInstance3D.new()
 		range_ring.mesh = tm
 		range_ring.material_override = game.fx.glow_mat(Color(1.0, 0.25, 0.2, 0.5), 1.2)
@@ -224,7 +225,7 @@ func _physics_process(delta: float) -> void:
 				if kind == Kind.HERO:
 					visible = false
 				else:
-					queue_free()
+					game.recycle(self)
 		if kind == Kind.HERO:
 			respawn_timer -= delta
 			if respawn_timer <= 0:
@@ -567,5 +568,21 @@ func respawn() -> void:
 	hp = max_hp
 	set_p2(game.spawn_pos(team))
 	atk_timer = 0
+	add_to_group("units")
+	play("idle", 1.0, true)
+
+
+func reset_creep() -> void:
+	dead = false
+	hp = max_hp
+	target = null
+	pending_hit = null
+	atk_timer = 0.0
+	corpse_t = 0.0
+	visible = true
+	facing = Vector2(1, 0) if team == 0 else Vector2(-1, 0)
+	if model != null:
+		model.rotation.y = atan2(facing.x, facing.y)
+	set_physics_process(true)
 	add_to_group("units")
 	play("idle", 1.0, true)
