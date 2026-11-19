@@ -53,6 +53,24 @@ func upgrade_rect() -> Rect2:
 	return Rect2(vs().x - 200, 64, 186, 52)
 
 
+const PICK := [["elfo", "Mago arcano", "Dano em área e teleporte"], ["elfa", "Caçadora", "Ataque de longe e flecha que atravessa"],
+	["cavaleiro", "Guardião", "Atordoa, aguenta e cura o time"], ["orc", "Brutamontes", "Terremoto, roubo de vida e esmagar"],
+	["orca", "Xamã", "Raio em cadeia, cura e tempestade"], ["barbaro", "Guerreiro", "Redemoinho, fúria e machado gigante"]]
+
+
+func pick_rect(i: int) -> Rect2:
+	var s := vs()
+	var w: float = min(330.0, (s.x - 80.0) / 3.0)
+	var hh: float = min(190.0, (s.y - 170.0) / 2.0)
+	var x0 := s.x / 2 - (w * 3 + 40) / 2
+	return Rect2(x0 + (i % 3) * (w + 20), 110 + (i / 3) * (hh + 20), w, hh)
+
+
+func change_rect() -> Rect2:
+	var r := restart_rect()
+	return Rect2(r.position.x + 40, r.end.y + 22, r.size.x - 80, 58)
+
+
 func restart_rect() -> Rect2:
 	var s := vs()
 	return Rect2(s.x / 2 - 170, s.y / 2 + 30, 340, 84)
@@ -95,9 +113,16 @@ func _input(event: InputEvent) -> void:
 func handle_press(idx: int, p: Vector2) -> void:
 	if is_portrait():
 		return
+	if game.picking:
+		for i in PICK.size():
+			if pick_rect(i).has_point(p):
+				game.pick_hero(PICK[i][0])
+		return
 	if end_visible:
 		if restart_rect().grow(20).has_point(p):
 			game.restart()
+		elif change_rect().grow(14).has_point(p):
+			game.change_hero()
 		return
 	help_time = min(help_time, 1.0)
 	if p.distance_to(atk_center()) < 92:
@@ -190,6 +215,9 @@ func pie(center: Vector2, r: float, frac: float, c: Color) -> void:
 	ui.draw_colored_polygon(pts, c)
 
 
+var river_mm := PackedVector2Array()
+
+
 func _draw_ui() -> void:
 	if game == null or game.player == null:
 		return
@@ -200,7 +228,17 @@ func _draw_ui() -> void:
 	var mm := Rect2(14, 14, 168, 168)
 	var k: float = mm.size.x / game.MAP
 	ui.draw_rect(mm, Color(0.08, 0.2, 0.09, 0.85))
-	ui.draw_line(mm.position, mm.end, Color(0.25, 0.5, 0.85, 0.9), 7.0)
+	if river_mm.is_empty():
+		var u := -100.0
+		while u <= 100.0:
+			var q: Vector2 = game.river_point(u)
+			if q.x > -2 and q.y > -2 and q.x < game.MAP + 2 and q.y < game.MAP + 2:
+				river_mm.append(q)
+			u += 4.0
+	var rp := PackedVector2Array()
+	for q in river_mm:
+		rp.append(mm.position + Vector2(clamp(q.x, 0, game.MAP), clamp(q.y, 0, game.MAP)) * k)
+	ui.draw_polyline(rp, Color(0.25, 0.5, 0.85, 0.9), 7.0)
 	for l in game.lanes:
 		var pts := PackedVector2Array()
 		for q in l:
@@ -287,7 +325,7 @@ func _draw_ui() -> void:
 	# --- skills
 	for i in 4:
 		var c := skill_center(i)
-		var col: Color = SKILL_COLORS[i]
+		var col: Color = SKILL_COLORS[i] if i != 0 else p.kit_color()
 		var locked: bool = i == 3 and p.level < 3
 		ui.draw_circle(c, 52, Color(0.08, 0.08, 0.12, 0.8))
 		ui.draw_circle(c, 46, Color(col.darkened(0.35), 0.95 if not locked else 0.35))
@@ -303,7 +341,7 @@ func _draw_ui() -> void:
 			ctext(c + Vector2(0, -6), str(int(ceil(cd))), 30, Color.WHITE)
 		else:
 			ctext(c + Vector2(0, -6), SKILL_KEYS[i], 26, Color(1, 1, 1, 0.9))
-		ctext(c + Vector2(0, 26), SKILL_NAMES[i], 13, Color(1, 1, 1, 0.95))
+		ctext(c + Vector2(0, 26), p.skill_names()[i], 13 if p.skill_names()[i].length() < 11 else 11, Color(1, 1, 1, 0.95))
 	# --- respawn
 	if p.dead:
 		ctext(Vector2(s.x / 2, s.y * 0.32), "Renascendo em %d" % ceil(p.respawn_timer), 44, Color.WHITE)
@@ -313,7 +351,7 @@ func _draw_ui() -> void:
 		var hr := Rect2(s.x / 2 - 360, s.y * 0.62 - 50, 720, 96)
 		ui.draw_rect(hr, Color(0, 0, 0, 0.55 * a))
 		ctext(Vector2(s.x / 2, s.y * 0.62 - 22), "Joystick à esquerda para mover. ATACAR mira o inimigo mais perto.", 18, Color(1, 1, 1, a))
-		ctext(Vector2(s.x / 2, s.y * 0.62 + 8), "Habilidades: NOVA, SALTO, FÚRIA e METEORO (Nv 3).", 18, Color(1, 1, 1, a))
+		ctext(Vector2(s.x / 2, s.y * 0.62 + 8), "%s: %s (a última no Nv 3)." % [p.hero_name, ", ".join(p.skill_names())], 18, Color(1, 1, 1, a))
 		ctext(Vector2(s.x / 2, s.y * 0.62 + 34), "Selva: pontos amarelos dão ouro e XP. Destrua o castelo vermelho!", 18, Color(1, 0.85, 0.4, a))
 	flush_text()
 	# --- end screen
@@ -324,7 +362,30 @@ func _draw_ui() -> void:
 		ui.draw_rect(rr, Color(0.2, 0.35, 0.6, 0.95))
 		ui.draw_rect(rr, Color(1, 1, 1, 0.8), false, 3.0)
 		ctext(rr.get_center(), "Jogar de novo", 34, Color.WHITE)
+		var cr := change_rect()
+		ui.draw_rect(cr, Color(0.25, 0.25, 0.3, 0.95))
+		ui.draw_rect(cr, Color(1, 1, 1, 0.6), false, 2.0)
+		ctext(cr.get_center(), "Trocar herói", 24, Color.WHITE)
 	flush_text()
+	# --- hero pick
+	if game.picking and not is_portrait():
+		ui.draw_rect(Rect2(Vector2.ZERO, s), Color(0.02, 0.03, 0.06, 0.8))
+		ctext(Vector2(s.x / 2, 60), "Escolha seu herói", 42, Color(1, 0.9, 0.6))
+		for i in PICK.size():
+			var r := pick_rect(i)
+			var col: Color = Unit.KITS[PICK[i][0]]["col"]
+			ui.draw_rect(r, Color(0.08, 0.09, 0.13, 0.95))
+			ui.draw_rect(Rect2(r.position, Vector2(r.size.x, 6)), col)
+			ui.draw_rect(r, Color(col, 0.8), false, 3.0)
+			var cx := r.position.x + r.size.x / 2
+			var nm: String = game.cfgs["hero_" + PICK[i][0]]["name"]
+			ctext(Vector2(cx, r.position.y + 34), nm, 30, Color.WHITE)
+			ctext(Vector2(cx, r.position.y + 66), PICK[i][1], 18, col.lightened(0.2))
+			ctext(Vector2(cx, r.position.y + 96), PICK[i][2], 14, Color(1, 1, 1, 0.8))
+			var names: Array = Unit.KITS[PICK[i][0]]["names"]
+			ctext(Vector2(cx, r.position.y + r.size.y - 50), names[0] + " · " + names[1], 13, Color(1, 1, 1, 0.65))
+			ctext(Vector2(cx, r.position.y + r.size.y - 28), names[2] + " · " + names[3], 13, Color(1, 1, 1, 0.65))
+		flush_text()
 	# --- rotate
 	if is_portrait():
 		ui.draw_rect(Rect2(Vector2.ZERO, s), Color(0.04, 0.06, 0.09, 0.97))

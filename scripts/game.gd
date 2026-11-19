@@ -56,6 +56,8 @@ var perf_acc := 0.0
 var perf_n := 0
 var prof := {}
 var art
+static var picked := ""
+static var picking := true
 
 
 func pf(k: String, t0: int) -> void:
@@ -71,6 +73,8 @@ func _ready() -> void:
 		low_quality = false
 	apply_quality()
 	for a in args:
+		if a.begins_with("--hero="):
+			picked = a.substr(7)
 		if a.begins_with("--shot="):
 			shot_mode = a.substr(7)
 	build_lanes()
@@ -101,12 +105,20 @@ func _ready() -> void:
 	for team in 2:
 		for st in structures_of(team):
 			block_cells(st.p2(), st.radius + 0.7)
-	for i in ROSTER.size():
+	if autotest or shot_mode != "" or "--bench" in args:
+		picking = shot_mode == "pick"
+	var roster: Array = ROSTER.duplicate(true)
+	for j in roster.size():
+		if roster[j][0] == picked and j != 0:
+			roster[j][0] = roster[0][0]
+			roster[0][0] = picked
+	for i in roster.size():
 		var team := 0 if i < 3 else 1
-		var key: String = "hero_" + ROSTER[i][0]
+		var key: String = "hero_" + roster[i][0]
 		var h = make_unit(Unit.Kind.HERO, team, spawn_pos(team), i == 0, key)
 		h.lane = ROSTER[i][1]
 		h.hero_name = cfgs[key]["name"]
+		h.set_kit(roster[i][0])
 		h.is_bot = i != 0 or (autotest and not ("--afk" in args))
 		heroes.append(h)
 	player = heroes[0]
@@ -245,16 +257,70 @@ func clamp_world(p: Vector2) -> Vector2:
 
 # ---------------------------------------------------------------- lanes
 func build_lanes() -> void:
-	lanes = [
-		PackedVector2Array([BASE_POS[0], Vector2(15, 108), Vector2(15, 24), Vector2(24, 15), Vector2(108, 15), BASE_POS[1]]),
-		PackedVector2Array([BASE_POS[0], BASE_POS[1]]),
-		PackedVector2Array([BASE_POS[0], Vector2(32, 125), Vector2(116, 125), Vector2(125, 116), Vector2(125, 32), BASE_POS[1]])]
+	# control points (point-symmetric about the map centre), smoothed into gentle curves
+	var ctrl := [
+		[BASE_POS[0], Vector2(15, 106), Vector2(12, 70), Vector2(16, 26), Vector2(26, 16), Vector2(70, 12), Vector2(106, 15), BASE_POS[1]],
+		[BASE_POS[0], Vector2(40, 97), Vector2(70, 70), Vector2(100, 43), BASE_POS[1]],
+		[BASE_POS[0], Vector2(34, 125), Vector2(70, 128), Vector2(114, 124), Vector2(124, 114), Vector2(128, 70), Vector2(125, 34), BASE_POS[1]]]
+	lanes = []
+	for c in ctrl:
+		lanes.append(_smooth(c))
 	for l in lanes:
 		var cum := PackedFloat32Array([0.0])
 		for i in range(1, l.size()):
 			cum.append(cum[i - 1] + l[i - 1].distance_to(l[i]))
 		lane_cum.append(cum)
 		lane_len.append(cum[cum.size() - 1])
+
+
+## Catmull-Rom through the control points, sampled every ~2.5 units.
+func _smooth(c: Array) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for i in c.size() - 1:
+		var p0: Vector2 = c[max(i - 1, 0)]
+		var p1: Vector2 = c[i]
+		var p2: Vector2 = c[i + 1]
+		var p3: Vector2 = c[min(i + 2, c.size() - 1)]
+		var n := int(max(1, ceil(p1.distance_to(p2) / 2.5)))
+		for k in n:
+			var t := float(k) / n
+			var t2 := t * t
+			var t3 := t2 * t
+			out.append(0.5 * ((2.0 * p1) + (-p0 + p2) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2 + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3))
+	out.append(c[c.size() - 1])
+	return out
+
+
+# ---------------------------------------------------------------- river (meandering, point-symmetric)
+## u along the river (0 at the map centre), v across it.
+func river_uv(p: Vector2) -> Vector2:
+	return Vector2((p.x + p.y) * 0.70710678 - MAP * 0.70710678, (p.x - p.y) * 0.70710678)
+
+
+func river_off(u: float) -> float:
+	return 7.0 * sin(u * 0.075) + 2.4 * sin(u * 0.19)
+
+
+func river_hw(u: float) -> float:
+	return 4.3 + 1.4 * cos(u * 0.12) + 0.5 * cos(u * 0.31)
+
+
+## signed distance across the river centreline
+func river_v(p: Vector2) -> float:
+	var uv := river_uv(p)
+	return uv.y - river_off(uv.x)
+
+
+## 0 on the centreline, 1 at the bank
+func river_depth(p: Vector2) -> float:
+	var uv := river_uv(p)
+	return abs(uv.y - river_off(uv.x)) / river_hw(uv.x)
+
+
+func river_point(u: float, v: float = 0.0) -> Vector2:
+	var vv := river_off(u) + v
+	var c := MAP * 0.70710678
+	return Vector2((u + c + vv) * 0.70710678, (u + c - vv) * 0.70710678)
 
 
 func _seg(lane: int, s: float) -> int:
@@ -330,7 +396,7 @@ func build_obstacles() -> void:
 			gz += step
 			if not keep or dist_to_lanes(p) < 7.5:
 				continue
-			if abs(p.x - p.y) / sqrt(2.0) < 5.5:
+			if river_depth(p) < 1.5:
 				continue  # river
 			if p.distance_to(BASE_POS[0]) < 24.0 or p.distance_to(BASE_POS[1]) < 24.0:
 				continue
@@ -484,7 +550,7 @@ func scatter_props() -> void:
 		while s < lane_len[lane] - 10.0:
 			var side := -1.0 if rng.randf() < 0.5 else 1.0
 			var p: Vector2 = lane_point(lane, s) + lane_normal(lane, s) * side * (LANE_W / 2.0 + 1.0)
-			if abs(p.x - p.y) > 6.0:
+			if river_depth(p) > 1.4:
 				groups[rock_keys[rng.randi_range(0, 2)]].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * rng.randf_range(3.5, 5.5)), Vector3(p.x, 0, p.y)))
 			s += rng.randf_range(9.0, 16.0)
 	for k in groups:
@@ -496,7 +562,9 @@ func scatter_props() -> void:
 func _physics_process(delta: float) -> void:
 	var portrait: bool = hud.is_portrait()
 	if not game_over and shot_mode == "":
-		get_tree().paused = portrait
+		get_tree().paused = portrait or picking
+	if picking and shot_mode == "":
+		return
 	if game_over or (portrait and shot_mode == ""):
 		return
 	refresh_units()
@@ -929,6 +997,17 @@ func end_game(won: bool) -> void:
 	get_tree().paused = true
 
 
+func pick_hero(k: String) -> void:
+	picked = k
+	picking = false
+	restart()
+
+
+func change_hero() -> void:
+	picking = true
+	restart()
+
+
 func restart() -> void:
 	get_tree().paused = false
 	get_tree().reload_current_scene()
@@ -964,8 +1043,9 @@ func setup_shot() -> void:
 		player.level = 3
 		player.cast(2)
 		await get_tree().create_timer(0.3).timeout
-		player.cast(3)
-		await get_tree().create_timer(0.5).timeout
+		player.facing = (heroes[3].p2() - player.p2()).normalized()
+		player.cast(3 if not "--q" in OS.get_cmdline_user_args() else 0)
+		await get_tree().create_timer(0.5 if player.kit == "elfo" or player.kit == "orca" else 0.12).timeout
 	else:
 		player.cast(0)
 		await get_tree().create_timer(0.3).timeout

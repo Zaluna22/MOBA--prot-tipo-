@@ -39,11 +39,11 @@ func river_cross_s(lane: int) -> float:
 	var s := 0.0
 	var L: float = game.lane_len[lane]
 	var p0: Vector2 = game.lane_point(lane, 0.0)
-	prev = p0.x - p0.y
+	prev = game.river_v(p0)
 	while s < L:
 		s += 0.5
 		var p: Vector2 = game.lane_point(lane, s)
-		var v := p.x - p.y
+		var v: float = game.river_v(p)
 		if sign(v) != sign(prev):
 			return s
 		prev = v
@@ -77,6 +77,7 @@ func brazier_points() -> Array:
 ## Stone fences along both lane edges across the river ([pos, yaw]).
 func fence_points() -> Array:
 	var out: Array = []
+	return out  # Stage 4: fences removed (read as rubble); fords are paved instead
 	var hw: float = game.LANE_W / 2.0 + 0.4
 	for lane in 3:
 		var sc := river_cross_s(lane)
@@ -130,8 +131,11 @@ func bake() -> void:
 				dirt = max(dirt, 1.0 - smoothstep(3.2, 4.8, dt + jit))
 			for c in game.CAMP_POS:
 				dirt = max(dirt, 1.0 - smoothstep(4.0, 6.0, p.distance_to(c) + jit * 1.2))
-			var dr: float = abs(p.x - p.y) / sqrt(2.0)
-			var water := 1.0 - smoothstep(3.4, 5.0, dr + jit * 0.7)
+			var uv: Vector2 = game.river_uv(p)
+			var dr: float = abs(uv.y - game.river_off(uv.x))
+			var rh: float = game.river_hw(uv.x)
+			var water := 1.0 - smoothstep(rh - 0.9, rh + 0.7, dr + jit * 0.9)
+			water *= 1.0 - stone * 0.9  # paved fords across the river
 			var jungle := smoothstep(6.0, 16.0, dl) * (1.0 - dirt)
 			# keep the alpha above 0 so the importer's alpha-border fix never touches RGB
 			splat.set_pixel(i, j, Color(dirt, stone, water, 0.1 + 0.9 * jungle))
@@ -343,20 +347,21 @@ func build_decor() -> void:
 		groups["tent"].append(xf(c + away2 * 4.6, 5.0, atan2(-away2.x, -away2.y)))
 		groups["crate_A_big"].append(xf(c + away2.rotated(0.9) * 4.4, 4.5, rng.randf() * TAU))
 		groups["barrel"].append(xf(c + away2.rotated(-0.9) * 4.4, 4.0, rng.randf() * TAU))
-	# river life, away from the crossings
-	var t := -6.0
-	while t < game.MAP + 6.0:
-		var on := Vector2(t, t)
+	# river life along the meander, away from the crossings
+	var t := -105.0
+	while t < 105.0:
+		var on: Vector2 = game.river_point(t)
+		var hw2: float = game.river_hw(t)
 		var near_cross := false
 		for lane in 3:
 			if on.distance_to(game.lane_point(lane, river_cross_s(lane))) < 9.0:
 				near_cross = true
 		if not near_cross:
-			var n := Vector2(1, -1).normalized() * rng.randf_range(-3.6, 3.6)
-			groups["waterlily_A" if rng.randf() < 0.6 else "waterplant_A"].append(xf(on + n, rng.randf_range(4.0, 6.0), rng.randf() * TAU, 0.02))
-			var bank := Vector2(1, -1).normalized() * (5.4 if rng.randf() < 0.5 else -5.4)
-			if rng.randf() < 0.5:
-				groups["rock_single_D"].append(xf(on + bank, rng.randf_range(4.0, 6.0), rng.randf() * TAU))
+			var pv := rng.randf_range(-0.7, 0.7) * hw2
+			groups["waterlily_A" if rng.randf() < 0.6 else "waterplant_A"].append(xf(game.river_point(t, pv), rng.randf_range(4.0, 6.0), rng.randf() * TAU, 0.02))
+			if rng.randf() < 0.55:
+				var side := 1.0 if rng.randf() < 0.5 else -1.0
+				groups["rock_single_D"].append(xf(game.river_point(t, side * (hw2 + 0.9)), rng.randf_range(3.5, 6.0), rng.randf() * TAU))
 		t += rng.randf_range(3.5, 6.0)
 	# bushes at the jungle edge of the lanes
 	for lane in 3:
@@ -364,7 +369,7 @@ func build_decor() -> void:
 		while s < game.lane_len[lane] - 8.0:
 			var side := -1.0 if rng.randf() < 0.5 else 1.0
 			var p: Vector2 = game.lane_point(lane, s) + game.lane_normal(lane, s) * side * (game.LANE_W / 2.0 + 2.6)
-			if abs(p.x - p.y) > 8.0 and p.distance_to(plaza_center(0)) > 18.0 and p.distance_to(plaza_center(1)) > 18.0:
+			if game.river_depth(p) > 1.8 and p.distance_to(plaza_center(0)) > 18.0 and p.distance_to(plaza_center(1)) > 18.0:
 				groups["trees_A_small"].append(xf(p, rng.randf_range(1.6, 2.2), rng.randf() * TAU))
 			s += rng.randf_range(7.0, 12.0)
 	game.multimesh(E + "flag_blue.gltf", flags[0])

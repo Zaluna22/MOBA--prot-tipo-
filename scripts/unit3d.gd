@@ -68,9 +68,42 @@ var buff_t := 0.0
 var dash_t := 0.0
 var dash_dir := Vector2.ZERO
 var dash_hit: Array = []
+var dash_dmg := true
 var ult_t := -1.0
 var ult_pos := Vector2.ZERO
 var move_input := Vector2.ZERO
+# Stage 4: per-hero kits and status effects
+var kit := "elfo"
+var stun_t := 0.0
+var slow_t := 0.0
+var armor_t := 0.0
+var ls_t := 0.0
+var hot_t := 0.0
+var range_t := 0.0
+var base_range := 1.0
+
+const KITS := {
+	"elfo": {"names": ["NOVA", "PISCAR", "ESCUDO", "METEORO"], "cd": [6.0, 8.0, 14.0, 45.0], "col": Color(0.45, 0.75, 1.0)},
+	"elfa": {"names": ["FLECHAS", "ROLAR", "ÁGUIA", "FLECHA SAGRADA"], "cd": [7.0, 7.0, 14.0, 40.0], "col": Color(0.55, 1.0, 0.55)},
+	"cavaleiro": {"names": ["ESCUDADA", "INVESTIDA", "BASTIÃO", "JULGAMENTO"], "cd": [8.0, 9.0, 16.0, 50.0], "col": Color(1.0, 0.92, 0.55)},
+	"orc": {"names": ["TERREMOTO", "SALTO", "SEDE", "ESMAGAR"], "cd": [7.0, 9.0, 15.0, 45.0], "col": Color(0.95, 0.4, 0.25)},
+	"orca": {"names": ["RAIO", "ESPÍRITO", "CURA", "TEMPESTADE"], "cd": [6.0, 8.0, 16.0, 45.0], "col": Color(0.6, 0.55, 1.0)},
+	"barbaro": {"names": ["REDEMOINHO", "SALTO", "FÚRIA", "MACHADO"], "cd": [6.0, 9.0, 15.0, 42.0], "col": Color(1.0, 0.65, 0.2)},
+}
+
+
+func set_kit(k: String) -> void:
+	kit = k
+	cd_max = KITS[k]["cd"].duplicate()
+	base_range = atk_range
+
+
+func skill_names() -> Array:
+	return KITS[kit]["names"]
+
+
+func kit_color() -> Color:
+	return KITS[kit]["col"]
 var attack_cmd := false
 var lock_t := 0.0
 
@@ -243,11 +276,34 @@ func is_valid_target(t) -> bool:
 
 
 func atk_speed_mult() -> float:
-	return 1.6 if buff_t > 0 else 1.0
+	var m := 1.0
+	if buff_t > 0:
+		m *= 1.6
+	if ls_t > 0:
+		m *= 1.35
+	if range_t > 0:
+		m *= 1.3
+	return m
 
 
 func move_speed() -> float:
-	return speed * (1.35 if buff_t > 0 else 1.0)
+	var m := 1.35 if buff_t > 0 else 1.0
+	if slow_t > 0:
+		m *= 0.55
+	return speed * m
+
+
+func stun(t: float) -> void:
+	if kind == Kind.TOWER or kind == Kind.BASE or dead:
+		return
+	stun_t = max(stun_t, t)
+	if game.fx != null:
+		game.fx.add_text(position, "ATORDOADO", Color(1, 1, 0.6))
+
+
+func slow(t: float) -> void:
+	if is_mobile():
+		slow_t = max(slow_t, t)
 
 
 func _physics_process(delta: float) -> void:
@@ -276,6 +332,13 @@ func _physics_process(delta: float) -> void:
 			if is_valid_target(t) and dist_to(t) <= atk_range + radius + t.radius + 1.0:
 				t.take_damage(dmg, self)
 				game.fx.add_spark(t.position + Vector3(0, t.hit_height, 0), team_color().lightened(0.4), 0.35)
+	slow_t -= delta
+	if stun_t > 0:
+		stun_t -= delta
+		if kind == Kind.HERO:
+			for i in 4:
+				cds[i] = max(0.0, cds[i] - delta)
+		return
 	var t0 := Time.get_ticks_usec()
 	if kind == Kind.HERO:
 		hero_tick(delta)
@@ -330,6 +393,10 @@ func take_damage(amount: float, src) -> void:
 		return
 	if (kind == Kind.TOWER or kind == Kind.BASE) and src != null and is_instance_valid(src) and src.kind == Kind.HERO:
 		amount *= 0.6
+	if armor_t > 0:
+		amount *= 0.5
+	if src != null and is_instance_valid(src) and src.kind == Kind.HERO and src.ls_t > 0 and not src.dead:
+		src.hp = min(src.max_hp, src.hp + amount * 0.35)
 	hp -= amount
 	if team == 2 and src != null and is_instance_valid(src) and not src.dead:
 		if not is_valid_target(target):
@@ -438,6 +505,17 @@ func hero_tick(delta: float) -> void:
 	for i in 4:
 		cds[i] = max(0.0, cds[i] - delta)
 	buff_t -= delta
+	armor_t -= delta
+	ls_t -= delta
+	if range_t > 0:
+		range_t -= delta
+		atk_range = base_range + 2.5 if range_t > 0 else base_range
+	if hot_t > 0:
+		hot_t -= delta
+		hp = min(max_hp, hp + max_hp * 0.05 * delta)
+		for a in game.heroes:
+			if a != self and a.team == team and not a.dead and a.dist_to(self) < 6.0:
+				a.hp = min(a.max_hp, a.hp + a.max_hp * 0.04 * delta)
 	hp = min(max_hp, hp + regen * delta)
 	if p2().distance_to(game.fountain_pos(team)) < game.FOUNTAIN_R:
 		hp = min(max_hp, hp + max_hp * 0.12 * delta)
@@ -644,45 +722,251 @@ func pick_bot_target(foe):
 
 # ---------------------------------------------------------------- skills
 func cast(i: int) -> bool:
-	if kind != Kind.HERO or dead or cds[i] > 0 or dash_t > 0:
+	if kind != Kind.HERO or dead or cds[i] > 0 or dash_t > 0 or stun_t > 0:
 		return false
 	if i == 3 and level < 3:
 		return false
 	cds[i] = cd_max[i]
-	var c := team_color().lightened(0.35)
+	var c := kit_color()
+	var lv := float(level)
+	var aim := _aim_dir()
 	match i:
-		0: # Giro: spin AoE
+		0:
+			_cast_q(c, lv, aim)
+		1:
+			_cast_w(c, lv, aim)
+		2:
+			_cast_e(c, lv)
+		3:
+			_cast_r(c, lv, aim)
+	return true
+
+
+func _aim_dir() -> Vector2:
+	var d := move_input if move_input.length() > 0.15 else facing
+	if not is_bot and move_input.length() <= 0.15 and target != null and is_instance_valid(target) and not target.dead:
+		d = target.p2() - p2()
+	if is_bot and target != null and is_instance_valid(target) and not target.dead:
+		d = target.p2() - p2()
+	if d.length() < 0.01:
+		d = facing
+	return d.normalized()
+
+
+func _hit_area(center: Vector2, r: float, dmg_v: float) -> Array:
+	var hit: Array = game.enemies_near(center, team, r)
+	for e in hit:
+		e.take_damage(dmg_v, self)
+	return hit
+
+
+func _dash(d: Vector2, t: float, dmg_hit := true) -> void:
+	dash_dir = d
+	face(d)
+	dash_t = t
+	dash_hit = []
+	dash_dmg = dmg_hit
+	game.fx.add_ring(position, 1.2, Color(0.85, 0.95, 1.0, 0.8), 0.4, 1.5)
+	play("dash", 1.6, true)
+
+
+func _blink(d: Vector2, dist: float, c: Color) -> void:
+	face(d)
+	game.fx.add_flash(position + Vector3(0, 1.0, 0), 1.4, c, 0.3)
+	game.fx.add_ring(position, 1.4, c, 0.35, 1.2)
+	var dest: Vector2 = game.clamp_world(p2() + d * dist)
+	set_p2(dest)
+	game.fx.add_flash(position + Vector3(0, 1.0, 0), 1.6, c, 0.35)
+	game.fx.add_ring(position, 1.6, c, 0.4, 1.4)
+	play("dash", 1.6, true)
+	lock_t = 0.15
+
+
+func _cast_q(c: Color, lv: float, aim: Vector2) -> void:
+	match kit:
+		"elfo", "barbaro":
 			var r := 3.6
 			play("spin", 1.6, true)
 			lock_t = 0.45
 			game.fx.add_nova(position, r, c)
-			for e in game.enemies_near(p2(), team, r):
-				e.take_damage(110.0 + 22.0 * level, self)
-		1: # Investida: dash
-			var dirv := move_input if move_input.length() > 0.15 else facing
-			if not is_bot and target != null and is_instance_valid(target) and not target.dead and move_input.length() <= 0.15:
-				dirv = target.p2() - p2()
-			dash_dir = dirv.normalized()
-			face(dash_dir)
-			dash_t = 0.28
-			dash_hit = []
-			game.fx.add_ring(position, 1.2, Color(0.85, 0.95, 1.0, 0.8), 0.4, 1.5)
-			play("dash", 1.6, true)
-		2: # Grito de guerra: buff + heal
+			_hit_area(p2(), r, 110.0 + 22.0 * lv)
+		"elfa":
+			var at: Vector2 = game.clamp_world(p2() + aim * 4.5)
+			play("ult", 1.8, true)
+			lock_t = 0.35
+			face(aim)
+			var p := Vector3(at.x, 0, at.y)
+			game.fx.add_ring(p, 3.2, c, 0.6, 0.0)
+			for k in 4:
+				var o := Vector2(randf_range(-2, 2), randf_range(-2, 2))
+				game.fx.add_spark(p + Vector3(o.x, 0.6, o.y), c, 0.7)
+			for e in _hit_area(at, 3.2, 95.0 + 20.0 * lv):
+				e.slow(2.0)
+		"cavaleiro":
+			var r := 2.8
+			play("spin", 1.6, true)
+			lock_t = 0.4
+			game.fx.add_nova(position, r, c)
+			game.shake(0.15)
+			for e in _hit_area(p2(), r, 80.0 + 16.0 * lv):
+				e.stun(1.1)
+		"orc":
+			var r := 4.0
+			play("ult", 1.6, true)
+			lock_t = 0.45
+			game.fx.add_nova(position, r, c)
+			game.fx.add_ring(position, r, Color(0.6, 0.45, 0.3), 0.6, 0.2)
+			game.shake(0.2)
+			for e in _hit_area(p2(), r, 90.0 + 18.0 * lv):
+				e.slow(2.5)
+		"orca":
+			# chain lightning: up to 3 enemies, each jump from the last
+			play("ult", 1.8, true)
+			lock_t = 0.3
+			var from := p2()
+			var hit: Array = []
+			var d := 115.0 + 22.0 * lv
+			for k in 3:
+				var best = null
+				for e in game.enemies_near(from, team, 6.0 if k == 0 else 4.5):
+					if e in hit:
+						continue
+					if best == null or e.p2().distance_to(from) < best.p2().distance_to(from):
+						best = e
+				if best == null:
+					break
+				hit.append(best)
+				game.fx.add_beam(best.position, 0.5, c, 0.3)
+				game.fx.add_flash(best.position + Vector3(0, 1.0, 0), 1.0, c, 0.25)
+				best.take_damage(d, self)
+				d *= 0.8
+				from = best.p2()
+			if hit.is_empty():
+				cds[0] = 1.0
+
+
+func _cast_w(c: Color, lv: float, aim: Vector2) -> void:
+	match kit:
+		"elfo":
+			_blink(aim, 6.5, c)
+		"orca":
+			_blink(aim, 6.0, c)
+			armor_t = max(armor_t, 1.5)
+		"elfa":
+			_dash(aim, 0.22, false)
+			buff_t = max(buff_t, 1.5)
+		_:
+			_dash(aim, 0.28, true)
+
+
+func _cast_e(c: Color, lv: float) -> void:
+	lock_t = 0.35
+	match kit:
+		"elfo":
+			armor_t = 4.0
+			hp = min(max_hp, hp + max_hp * 0.08)
+			play("cheer", 1.8, true)
+			game.fx.add_aura(self, 4.0, c)
+			game.fx.add_text(position, "ESCUDO!", c.lightened(0.3))
+		"elfa":
+			range_t = 6.0
+			atk_range = base_range + 2.5
+			play("cheer", 1.8, true)
+			game.fx.add_aura(self, 6.0, c)
+			game.fx.add_text(position, "OLHO DE ÁGUIA!", c.lightened(0.3))
+		"cavaleiro":
+			armor_t = 5.0
+			hp = min(max_hp, hp + max_hp * 0.1)
+			play("cheer", 1.8, true)
+			game.fx.add_aura(self, 5.0, c)
+			game.fx.add_text(position, "BASTIÃO!", c)
+			for e in game.enemies_near(p2(), team, 5.0):
+				if e.kind == Kind.HERO or e.kind == Kind.CREEP or e.kind == Kind.RANGED:
+					e.target = self
+		"orc":
+			ls_t = 6.0
+			play("cheer", 1.8, true)
+			game.fx.add_aura(self, 6.0, Color(0.9, 0.15, 0.15))
+			game.fx.add_text(position, "SEDE DE SANGUE!", Color(1, 0.35, 0.3))
+		"orca":
+			hot_t = 5.0
+			play("cheer", 1.8, true)
+			game.fx.add_aura(self, 5.0, Color(0.4, 1.0, 0.6))
+			game.fx.add_ring(position, 6.0, Color(0.4, 1.0, 0.6), 0.8, 0.0)
+			game.fx.add_text(position, "CURA!", Color(0.5, 1, 0.6))
+		_:
 			buff_t = 5.0
 			hp = min(max_hp, hp + max_hp * 0.12)
 			play("cheer", 1.8, true)
-			lock_t = 0.35
 			game.fx.add_aura(self, buff_t, Color(1.0, 0.7, 0.2))
 			game.fx.add_flash(position + Vector3(0, 1.0, 0), 1.6, Color(1.0, 0.8, 0.3), 0.3)
 			game.fx.add_text(position, "FÚRIA!", Color(1, 0.85, 0.3))
-		3: # Julgamento: delayed big AoE in front
-			ult_pos = game.clamp_world(p2() + facing * 3.5)
+
+
+func _cast_r(c: Color, lv: float, aim: Vector2) -> void:
+	face(aim)
+	match kit:
+		"elfo", "orca":
+			ult_pos = game.clamp_world(p2() + aim * 3.5)
 			ult_t = 0.7
 			lock_t = 0.7
 			play("ult", 1.2, true)
-			game.fx.add_meteor(Vector3(ult_pos.x, 0, ult_pos.y), ult_t, 5.0)
-	return true
+			if kit == "elfo":
+				game.fx.add_meteor(Vector3(ult_pos.x, 0, ult_pos.y), ult_t, 5.0)
+			else:
+				game.fx.add_ring(Vector3(ult_pos.x, 0, ult_pos.y), 5.0, c, ult_t, 0.0)
+		"elfa":
+			# long piercing arrow along the aim line
+			play("ult", 1.4, true)
+			lock_t = 0.4
+			var hit: Array = []
+			var s := 1.5
+			while s <= 15.0:
+				var q: Vector2 = p2() + aim * s
+				if s < 14.0:
+					game.fx.add_spark(Vector3(q.x, 1.1, q.y), c.lightened(0.4), 0.9)
+				for e in game.enemies_near(q, team, 1.6):
+					if not e in hit:
+						hit.append(e)
+						e.take_damage(240.0 + 40.0 * lv, self)
+						e.stun(0.8)
+				s += 1.5
+			game.fx.add_flash(position + Vector3(aim.x * 2, 1.1, aim.y * 2), 1.8, c, 0.3)
+		"cavaleiro":
+			play("ult", 1.2, true)
+			lock_t = 0.5
+			game.fx.add_beam(position, 2.4, c, 0.7)
+			game.fx.add_nova(position, 5.0, c, 0.6)
+			game.shake(0.3)
+			_hit_area(p2(), 5.0, 200.0 + 35.0 * lv)
+			for a in game.heroes:
+				if a.team == team and not a.dead and a.dist_to(self) < 7.0:
+					a.hp = min(a.max_hp, a.hp + a.max_hp * 0.3)
+					game.fx.add_flash(a.position + Vector3(0, 1.2, 0), 1.2, Color(1, 1, 0.7), 0.4)
+		"orc":
+			play("ult", 1.3, true)
+			lock_t = 0.5
+			var at: Vector2 = game.clamp_world(p2() + aim * 2.5)
+			var p := Vector3(at.x, 0, at.y)
+			game.fx.add_nova(p, 5.5, c, 0.6)
+			game.fx.add_ring(p, 5.5, Color(0.55, 0.4, 0.3), 0.7, 0.1)
+			for k in 3:
+				var ang := TAU * k / 3.0
+				game.fx.add_fire(p + Vector3(cos(ang), 0, sin(ang)) * 2.0, 1.1, 0.6)
+			game.shake(0.4)
+			for e in _hit_area(at, 5.5, 220.0 + 40.0 * lv):
+				e.stun(1.3)
+		"barbaro":
+			# huge cleave in front
+			play("spin", 1.3, true)
+			lock_t = 0.45
+			var at: Vector2 = game.clamp_world(p2() + aim * 3.0)
+			var p := Vector3(at.x, 0, at.y)
+			game.fx.add_nova(p, 4.2, c, 0.5)
+			game.fx.add_flash(p + Vector3(0, 1.0, 0), 2.2, c, 0.3)
+			game.shake(0.35)
+			for e in _hit_area(at, 4.2, 300.0 + 45.0 * lv):
+				e.slow(2.0)
 
 
 func dash_tick(delta: float) -> void:
@@ -690,7 +974,7 @@ func dash_tick(delta: float) -> void:
 	var step := dash_dir * 26.0 * delta
 	set_p2(game.clamp_world(p2() + step))
 	game.fx.add_spark(position + Vector3(0, 0.8, 0), team_color().lightened(0.5), 0.4)
-	for e in game.enemies_near(p2(), team, 1.4):
+	for e in (game.enemies_near(p2(), team, 1.4) if dash_dmg else []):
 		if not e in dash_hit:
 			dash_hit.append(e)
 			e.take_damage(80.0 + 16.0 * level, self)
@@ -700,14 +984,22 @@ func dash_tick(delta: float) -> void:
 
 func ult_land() -> void:
 	var p := Vector3(ult_pos.x, 0, ult_pos.y)
-	game.fx.add_nova(p, 5.0, Color(1.0, 0.55, 0.2), 0.6)
-	game.fx.add_flash(p + Vector3(0, 1.5, 0), 2.6, Color(1.0, 0.55, 0.2), 0.3)
-	for i in 3:
-		var a := TAU * i / 3.0 + randf()
-		game.fx.add_fire(p + Vector3(cos(a), 0, sin(a)) * 1.8, 1.3, 0.7)
+	var col := Color(1.0, 0.55, 0.2) if kit != "orca" else kit_color()
+	game.fx.add_nova(p, 5.0, col, 0.6)
+	game.fx.add_flash(p + Vector3(0, 1.5, 0), 2.6, col, 0.3)
+	if kit == "orca":
+		for i in 3:
+			var a := TAU * i / 3.0 + randf()
+			game.fx.add_beam(p + Vector3(cos(a), 0, sin(a)) * 2.0, 0.6, col, 0.35)
+	else:
+		for i in 3:
+			var a := TAU * i / 3.0 + randf()
+			game.fx.add_fire(p + Vector3(cos(a), 0, sin(a)) * 1.8, 1.3, 0.7)
 	game.shake(0.35)
 	for e in game.enemies_near(ult_pos, team, 5.0):
 		e.take_damage(260.0 + 45.0 * level, self)
+		if kit == "orca":
+			e.slow(2.5)
 
 
 func xp_to_next() -> float:
@@ -744,6 +1036,8 @@ func respawn() -> void:
 	visible = true
 	ring.visible = true
 	hp = max_hp
+	stun_t = 0.0
+	slow_t = 0.0
 	set_p2(game.spawn_pos(team))
 	atk_timer = 0
 	add_to_group("units")
@@ -753,6 +1047,8 @@ func respawn() -> void:
 func reset_creep() -> void:
 	dead = false
 	hp = max_hp
+	stun_t = 0.0
+	slow_t = 0.0
 	target = null
 	pending_hit = null
 	atk_timer = 0.0
