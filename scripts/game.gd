@@ -6,6 +6,7 @@ extends Node3D
 const Unit := preload("res://scripts/unit3d.gd")
 const FxScript := preload("res://scripts/fx3d.gd")
 const HudScript := preload("res://scripts/hud.gd")
+const ArtScript := preload("res://scripts/world_art.gd")
 
 const MAP := 140.0
 const FOUNTAIN_R := 9.0
@@ -54,6 +55,7 @@ var cull_t := 0.0
 var perf_acc := 0.0
 var perf_n := 0
 var prof := {}
+var art
 
 
 func pf(k: String, t0: int) -> void:
@@ -73,6 +75,13 @@ func _ready() -> void:
 			shot_mode = a.substr(7)
 	build_lanes()
 	build_obstacles()
+	art = ArtScript.new(self)
+	if "--bake" in args:
+		art.bake()
+		set_physics_process(false)
+		set_process(false)
+		get_tree().quit()
+		return
 	load_configs()
 	fx = FxScript.new()
 	fx.game = self
@@ -82,19 +91,12 @@ func _ready() -> void:
 
 	for team in 2:
 		bases[team] = make_unit(Unit.Kind.BASE, team, BASE_POS[team])
-		for lane in 3:
-			var L: float = lane_len[lane]
-			for tier in [1, 2]:
-				var s: float = L * 0.38 if tier == 1 else 24.0
-				if team == 1:
-					s = L - s
-				var side := 3.4 if tier == 1 else -3.4
-				var p: Vector2 = lane_point(lane, s) + lane_normal(lane, s) * side
-				var t = make_unit(Unit.Kind.TOWER, team, p)
-				t.tier = tier
-				t.lane = lane
-				t.lane_s = s
-				towers[team].append(t)
+	for spot in art.tower_spots():
+		var t = make_unit(Unit.Kind.TOWER, spot["team"], spot["pos"])
+		t.tier = spot["tier"]
+		t.lane = spot["lane"]
+		t.lane_s = spot["s"]
+		towers[spot["team"]].append(t)
 
 	for team in 2:
 		for st in structures_of(team):
@@ -119,6 +121,28 @@ func _ready() -> void:
 	cam_focus = player.position
 	update_camera(1.0)
 
+	# soft vignette between the 3D view and the HUD
+	var vl := CanvasLayer.new()
+	vl.layer = 0
+	var vg := Gradient.new()
+	vg.set_color(0, Color(0, 0, 0, 0))
+	vg.set_color(1, Color(0.0, 0.03, 0.04, 0.55))
+	vg.add_point(0.62, Color(0, 0, 0, 0))
+	var vt := GradientTexture2D.new()
+	vt.gradient = vg
+	vt.fill = GradientTexture2D.FILL_RADIAL
+	vt.fill_from = Vector2(0.5, 0.5)
+	vt.fill_to = Vector2(1.08, 1.08)
+	vt.width = 128
+	vt.height = 128
+	var vr := TextureRect.new()
+	vr.texture = vt
+	vr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	vr.stretch_mode = TextureRect.STRETCH_SCALE
+	vr.set_anchors_preset(Control.PRESET_FULL_RECT)
+	vr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vl.add_child(vr)
+	add_child(vl)
 	hud = HudScript.new()
 	hud.game = self
 	add_child(hud)
@@ -389,10 +413,10 @@ func push_out(p: Vector2, r: float) -> Vector2:
 func build_world() -> void:
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.08, 0.13, 0.1)
+	env.background_color = Color(0.05, 0.1, 0.1)
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.55, 0.6, 0.7)
-	env.ambient_light_energy = 0.55
+	env.ambient_light_color = Color(0.5, 0.64, 0.74)
+	env.ambient_light_energy = 0.7
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.tonemap_exposure = 0.95
 	env.glow_enabled = not low_quality
@@ -400,97 +424,35 @@ func build_world() -> void:
 	env.glow_bloom = 0.05
 	env.glow_hdr_threshold = 1.4
 	env.fog_enabled = true
-	env.fog_light_color = Color(0.12, 0.18, 0.16)
+	env.fog_light_color = Color(0.1, 0.17, 0.18)
 	env.fog_density = 0.006
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
 
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-52, -38, 0)
-	sun.light_color = Color(1.0, 0.94, 0.82)
-	sun.light_energy = 1.25
-	sun.shadow_enabled = not low_quality
+	sun.rotation_degrees = ArtScript.SUN_ROT
+	sun.light_color = Color(1.0, 0.88, 0.72)
+	sun.light_energy = 1.3
+	sun.shadow_enabled = false
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
 	sun.directional_shadow_max_distance = 45.0
 	sun.shadow_bias = 0.05
 	add_child(sun)
 
-	# grass
-	var gm := StandardMaterial3D.new()
-	gm.albedo_texture = noise_tex(Color(0.13, 0.27, 0.12), Color(0.24, 0.42, 0.17), 0.02, 3)
-	gm.uv1_scale = Vector3(24, 24, 1)
-	gm.roughness = 1.0
-	plane(Vector2(MAP + 60, MAP + 60), Vector3(MAP / 2, 0, MAP / 2), gm)
-	# river (diagonal, top-left to bottom-right corner)
-	var rm := StandardMaterial3D.new()
-	rm.albedo_texture = noise_tex(Color(0.1, 0.3, 0.5), Color(0.25, 0.55, 0.75), 0.05, 21)
-	rm.uv1_scale = Vector3(1, 14, 1)
-	rm.metallic = 0.3
-	rm.roughness = 0.15
-	rm.emission_enabled = true
-	rm.emission = Color(0.05, 0.12, 0.2)
-	var river := plane(Vector2(8.0, MAP * 1.42), Vector3(MAP / 2, 0.01, MAP / 2), rm)
-	river.rotation.y = PI / 4.0
-	# lanes: one strip per segment + discs at the corners, all one material
-	var lm := StandardMaterial3D.new()
-	lm.albedo_texture = noise_tex(Color(0.33, 0.26, 0.18), Color(0.5, 0.41, 0.29), 0.03, 9)
-	lm.uv1_triplanar = true
-	lm.uv1_scale = Vector3(0.08, 0.08, 0.08)
-	lm.roughness = 0.95
-	var disc := CylinderMesh.new()
-	disc.top_radius = LANE_W / 2.0
-	disc.bottom_radius = LANE_W / 2.0
-	disc.height = 0.02
-	disc.radial_segments = 24
-	for l in lanes:
-		for i in l.size() - 1:
-			var a: Vector2 = l[i]
-			var b: Vector2 = l[i + 1]
-			var strip := plane(Vector2(LANE_W, a.distance_to(b)), Vector3((a.x + b.x) / 2, 0.02, (a.y + b.y) / 2), lm)
-			strip.rotation.y = atan2(b.x - a.x, b.y - a.y)
-			if i > 0:
-				var dm := MeshInstance3D.new()
-				dm.mesh = disc
-				dm.material_override = lm
-				dm.position = Vector3(a.x, 0.015, a.y)
-				add_child(dm)
+	art.build_ground()
 	# base plazas + fountains
-	var plaza := CylinderMesh.new()
-	plaza.top_radius = 15.0
-	plaza.bottom_radius = 15.0
-	plaza.height = 0.02
-	plaza.radial_segments = 40
 	for team in 2:
-		var pm := MeshInstance3D.new()
-		pm.mesh = plaza
-		pm.material_override = lm
-		var mid: Vector2 = (BASE_POS[team] + FOUNTAIN_POS[team]) / 2.0
-		pm.position = Vector3(mid.x, 0.018, mid.y)
-		add_child(pm)
 		var fm := MeshInstance3D.new()
-		var cm := CylinderMesh.new()
-		cm.top_radius = FOUNTAIN_R
-		cm.bottom_radius = FOUNTAIN_R
-		cm.height = 0.02
-		cm.radial_segments = 40
+		var cm := PlaneMesh.new()
+		cm.size = Vector2(FOUNTAIN_R * 2.0, FOUNTAIN_R * 2.0)
 		fm.mesh = cm
-		fm.material_override = FxScript.glow_mat(Color(Unit.TEAM_COLORS[team], 0.18), 1.0)
+		fm.material_override = FxScript.ground_ring_mat(Color(Unit.TEAM_COLORS[team], 0.5), 0.35, 0.04)
 		fm.position = Vector3(FOUNTAIN_POS[team].x, 0.04, FOUNTAIN_POS[team].y)
 		add_child(fm)
-	# neutral camp clearings
-	for c in CAMP_POS:
-		var cmi := MeshInstance3D.new()
-		var cc := CylinderMesh.new()
-		cc.top_radius = 4.0
-		cc.bottom_radius = 4.0
-		cc.height = 0.02
-		cc.radial_segments = 24
-		cmi.mesh = cc
-		cmi.material_override = lm
-		cmi.position = Vector3(c.x, 0.02, c.y)
-		add_child(cmi)
 	scatter_props()
+	art.build_decor()
+	art.build_blobs()
 
 
 func scatter_props() -> void:
@@ -585,6 +547,7 @@ func _process(delta: float) -> void:
 	if cull_t <= 0:
 		cull_t = 0.4
 		cull_animations()
+	art.update_blobs()
 
 
 ## Units far from the camera stop animating (skinning + AnimationPlayer cost).
@@ -990,15 +953,22 @@ func stage_fight(waves: int) -> void:
 
 
 func setup_shot() -> void:
-	if shot_mode == "close":
-		cam_zoom = 0.45
+	if shot_mode == "close" or shot_mode == "skills":
+		cam_zoom = 0.6
 	if shot_mode == "far":
 		cam_zoom = 3.2
 	stage_fight(2)
 	update_camera(1.0)
 	await get_tree().create_timer(1.5).timeout
-	player.cast(0)
-	await get_tree().create_timer(0.3).timeout
+	if shot_mode == "skills":
+		player.level = 3
+		player.cast(2)
+		await get_tree().create_timer(0.3).timeout
+		player.cast(3)
+		await get_tree().create_timer(0.5).timeout
+	else:
+		player.cast(0)
+		await get_tree().create_timer(0.3).timeout
 	var img := get_viewport().get_texture().get_image()
 	img.save_png("/tmp/shot_%s.png" % shot_mode)
 	print("SHOT SAVED")

@@ -1,109 +1,195 @@
 extends Node3D
-## 3D visual effects: projectiles, rings, novas, beams, sparks.
+## 3D visual effects drawn with one small shader (shaders/fx.gdshader) on pooled quads:
+## ground rings/novas, glow sprites, fire sprites, light beams. No GPU particles, so the
+## cost stays predictable on phones. MAX_ITEMS is the hard budget.
+
+const FX_SHADER := preload("res://shaders/fx.gdshader")
+const MAX_ITEMS := 56
+const MAX_ITEMS_LOW := 36
 
 var game
 var items: Array = []
-var torus_mesh: TorusMesh
-var disc_mesh: CylinderMesh
-var sphere_mesh: SphereMesh
-var beam_mesh: CylinderMesh
+var flat_mesh: PlaneMesh
+var quad_mesh: QuadMesh
+var pool := {"flat": [], "quad": []}
+static var noise: Texture2D
 
 
 func _ready() -> void:
-	torus_mesh = TorusMesh.new()
-	torus_mesh.inner_radius = 0.9
-	torus_mesh.outer_radius = 1.0
-	torus_mesh.rings = 32
-	torus_mesh.ring_segments = 6
-	disc_mesh = CylinderMesh.new()
-	disc_mesh.top_radius = 1.0
-	disc_mesh.bottom_radius = 1.0
-	disc_mesh.height = 0.02
-	disc_mesh.radial_segments = 32
-	sphere_mesh = SphereMesh.new()
-	sphere_mesh.radius = 0.5
-	sphere_mesh.height = 1.0
-	sphere_mesh.radial_segments = 12
-	sphere_mesh.rings = 6
-	beam_mesh = CylinderMesh.new()
-	beam_mesh.top_radius = 1.0
-	beam_mesh.bottom_radius = 1.0
-	beam_mesh.height = 1.0
-	beam_mesh.radial_segments = 20
-	beam_mesh.cap_top = false
-	beam_mesh.cap_bottom = false
+	flat_mesh = PlaneMesh.new()
+	flat_mesh.size = Vector2(2, 2)
+	quad_mesh = QuadMesh.new()
+	quad_mesh.size = Vector2(2, 2)
 
 
+static func fx_mat(mode: int, c: Color) -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = FX_SHADER
+	m.set_shader_parameter("mode", mode)
+	m.set_shader_parameter("col", c)
+	if noise == null:
+		noise = load("res://assets/baked/tiles.png")
+	m.set_shader_parameter("noise_tex", noise)
+	return m
+
+
+## Flat selection/aura ring for units and fountains.
+static func ground_ring_mat(c: Color, fill := 0.12, width := 0.07) -> ShaderMaterial:
+	var m := fx_mat(0, c)
+	m.set_shader_parameter("ringr", 0.86)
+	m.set_shader_parameter("width", width)
+	m.set_shader_parameter("fill", fill)
+	return m
+
+
+## Old unlit material, still used for tower crystals.
 static func glow_mat(c: Color, energy := 1.3) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.blend_mode = BaseMaterial3D.BLEND_MODE_MIX
 	m.cull_mode = BaseMaterial3D.CULL_DISABLED
 	m.albedo_color = Color(c.r * energy, c.g * energy, c.b * energy, c.a)
-	m.no_depth_test = false
 	return m
 
 
-var pool: Array = []
+func budget() -> int:
+	return MAX_ITEMS_LOW if game.low_quality else MAX_ITEMS
 
 
-## Effects reuse pooled MeshInstances (and their materials) instead of
-## allocating new nodes every shot.
-func _spawn(mesh: Mesh, c: Color, energy := 1.3) -> MeshInstance3D:
+func _spawn(kind: String, mode: int, c: Color) -> MeshInstance3D:
 	var mi: MeshInstance3D
-	if pool.size() > 0:
-		mi = pool.pop_back()
+	if pool[kind].size() > 0:
+		mi = pool[kind].pop_back()
 		mi.visible = true
 		mi.scale = Vector3.ONE
-		var m: StandardMaterial3D = mi.material_override
-		m.albedo_color = Color(c.r * energy, c.g * energy, c.b * energy, c.a)
+		mi.rotation = Vector3.ZERO
 	else:
 		mi = MeshInstance3D.new()
-		mi.material_override = glow_mat(c, energy)
+		mi.mesh = flat_mesh if kind == "flat" else quad_mesh
+		mi.material_override = fx_mat(mode, c)
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.set_meta("kind", kind)
 		add_child(mi)
-	mi.mesh = mesh
+	var m: ShaderMaterial = mi.material_override
+	m.set_shader_parameter("mode", mode)
+	m.set_shader_parameter("col", c)
+	m.set_shader_parameter("alpha", 1.0)
+	m.set_shader_parameter("ringr", 0.9)
+	m.set_shader_parameter("width", 0.08)
+	m.set_shader_parameter("swirl", 0.0)
+	m.set_shader_parameter("fill", 0.0)
 	return mi
 
 
+func _item(d: Dictionary, optional := false) -> bool:
+	if optional and items.size() >= budget():
+		d["node"].visible = false
+		pool[d["node"].get_meta("kind")].append(d["node"])
+		return false
+	d["t"] = 0.0
+	items.append(d)
+	return true
+
+
+func full() -> bool:
+	return items.size() >= budget()
+
+
 func add_ring(p: Vector3, r: float, c: Color, dur := 0.35, grow := 0.3) -> void:
-	var mi := _spawn(torus_mesh, c)
-	mi.position = p + Vector3(0, 0.08, 0)
-	items.append({"type": "ring", "node": mi, "r": r, "t": 0.0, "dur": dur, "grow": grow, "c": c})
+	if full():
+		return
+	var mi := _spawn("flat", 0, c)
+	mi.position = p + Vector3(0, 0.07, 0)
+	_item({"type": "ring", "node": mi, "r": r, "dur": dur, "grow": grow})
 
 
+## Spinning shockwave: swirl disc expanding to r plus a bright flash in the middle.
 func add_nova(p: Vector3, r: float, c: Color, dur := 0.45) -> void:
-	add_ring(p, r, c, dur, 0.0)
-	var mi := _spawn(disc_mesh, Color(c, 0.15), 1.2)
-	mi.position = p + Vector3(0, 0.06, 0)
-	items.append({"type": "disc", "node": mi, "r": r, "t": 0.0, "dur": dur, "c": Color(c, 0.15)})
-	var rr := _spawn(torus_mesh, c)
-	rr.position = p + Vector3(0, 0.1, 0)
-	items.append({"type": "expand", "node": rr, "r": r, "t": 0.0, "dur": dur * 0.8, "c": c})
+	var mi := _spawn("flat", 0, c)
+	mi.position = p + Vector3(0, 0.08, 0)
+	mi.scale = Vector3(r, 1, r)
+	var m: ShaderMaterial = mi.material_override
+	m.set_shader_parameter("swirl", 1.0)
+	m.set_shader_parameter("fill", 0.3)
+	m.set_shader_parameter("width", 0.06)
+	_item({"type": "nova", "node": mi, "r": r, "dur": dur})
+	add_flash(p + Vector3(0, 0.8, 0), r * 0.3, c, dur * 0.4)
+
+
+func add_flash(p: Vector3, r: float, c: Color, dur := 0.25) -> void:
+	if full():
+		return
+	var mi := _spawn("quad", 1, c)
+	mi.position = p
+	_item({"type": "flash", "node": mi, "r": r, "dur": dur})
 
 
 func add_spark(p: Vector3, c: Color, size := 0.5) -> void:
-	var mi := _spawn(sphere_mesh, c, 2.5)
+	if full():
+		return
+	var mi := _spawn("quad", 1, c)
 	mi.position = p
-	items.append({"type": "spark", "node": mi, "s": size, "t": 0.0, "dur": 0.18, "c": c})
+	_item({"type": "spark", "node": mi, "s": size, "dur": 0.2})
 
 
 func add_beam(p: Vector3, r: float, c: Color, dur := 0.6) -> void:
-	var mi := _spawn(beam_mesh, Color(c, 0.6), 2.5)
+	var mi := _spawn("quad", 3, c)
 	mi.position = p + Vector3(0, 6, 0)
-	items.append({"type": "beam", "node": mi, "r": r, "t": 0.0, "dur": dur, "c": Color(c, 0.6)})
+	_item({"type": "beam", "node": mi, "r": r, "dur": dur})
+
+
+## Fúria: a golden swirl that follows the hero while the buff lasts.
+func add_aura(u, dur: float, c: Color) -> void:
+	var mi := _spawn("flat", 0, c)
+	var m: ShaderMaterial = mi.material_override
+	m.set_shader_parameter("swirl", 0.8)
+	m.set_shader_parameter("fill", 0.25)
+	m.set_shader_parameter("ringr", 0.8)
+	_item({"type": "aura", "node": mi, "u": u, "r": u.radius * 2.2, "dur": dur})
+
+
+## Meteoro: warning circle on the ground and a fireball falling onto it.
+func add_meteor(p: Vector3, delay: float, r: float) -> void:
+	var w := _spawn("flat", 0, Color(1.0, 0.45, 0.15))
+	w.position = p + Vector3(0, 0.07, 0)
+	w.scale = Vector3(r, 1, r)
+	(w.material_override as ShaderMaterial).set_shader_parameter("fill", 0.35)
+	_item({"type": "warn", "node": w, "dur": delay})
+	var f := _spawn("quad", 2, Color(1, 0.6, 0.2))
+	_item({"type": "fall", "node": f, "from": p + Vector3(-5, 18, 5), "to": p + Vector3(0, 1.2, 0), "dur": delay})
+	var g := _spawn("quad", 1, Color(1.0, 0.4, 0.1, 0.7))
+	_item({"type": "fall", "node": g, "from": p + Vector3(-5, 18, 5), "to": p + Vector3(0, 1.2, 0), "dur": delay, "glow": true})
+
+
+## Short-lived flames bursting from an impact.
+func add_fire(p: Vector3, size: float, dur := 0.6) -> void:
+	if full():
+		return
+	var mi := _spawn("quad", 2, Color(1, 0.6, 0.2))
+	mi.position = p + Vector3(0, size * 0.9, 0)
+	_item({"type": "fire", "node": mi, "s": size, "dur": dur})
 
 
 func add_projectile(from: Vector3, target, src, dmg: float, c: Color, speed := 14.0, size := 0.32) -> void:
-	var mi := _spawn(sphere_mesh, c, 2.5)
+	var mi := _spawn("quad", 1, c)
 	mi.position = from
-	mi.scale = Vector3.ONE * size
-	items.append({"type": "proj", "node": mi, "target": target, "src": src, "dmg": dmg, "speed": speed, "c": c, "t": 0.0, "dur": 5.0})
+	mi.scale = Vector3.ONE * size * 1.6
+	var tail: MeshInstance3D = null
+	if not game.low_quality or size > 0.4:
+		tail = _spawn("quad", 1, c)
+		tail.position = from
+		tail.scale = Vector3.ONE * size * 1.1
+		(tail.material_override as ShaderMaterial).set_shader_parameter("alpha", 0.45)
+	items.append({"type": "proj", "node": mi, "tail": tail, "target": target, "src": src, "dmg": dmg, "speed": speed, "c": c, "t": 0.0, "dur": 5.0, "size": size})
 
 
 func add_text(p: Vector3, text: String, c: Color) -> void:
 	game.hud_texts.append({"p": p, "text": text, "c": c, "t": 0.0, "dur": 1.2})
+
+
+func _release(node: MeshInstance3D) -> void:
+	node.visible = false
+	pool[node.get_meta("kind")].append(node)
 
 
 func _process(delta: float) -> void:
@@ -112,26 +198,46 @@ func _process(delta: float) -> void:
 		it["t"] += delta
 		var k: float = it["t"] / it["dur"]
 		var node: MeshInstance3D = it["node"]
+		var m: ShaderMaterial = node.material_override
 		var done: bool = k >= 1.0
 		match it["type"]:
 			"ring":
 				var s: float = it["r"] * (1.0 + k * it["grow"])
 				node.scale = Vector3(s, 1.0, s)
-				_fade(node, it["c"], 1.0 - k)
-			"disc":
-				node.scale = Vector3(it["r"], 1.0, it["r"])
-				_fade(node, it["c"], 1.0 - k)
-			"expand":
-				var s2: float = max(0.05, it["r"] * k)
-				node.scale = Vector3(s2, 2.0, s2)
-				_fade(node, it["c"], 1.0 - k * 0.6)
+				m.set_shader_parameter("alpha", 1.0 - k)
+			"nova":
+				var e: float = 1.0 - pow(1.0 - min(k * 1.4, 1.0), 3.0)
+				m.set_shader_parameter("ringr", 0.15 + 0.8 * e)
+				m.set_shader_parameter("alpha", 1.0 - k * k)
+				node.rotation.y = -k * 2.5
+			"flash":
+				node.scale = Vector3.ONE * it["r"] * (0.6 + k)
+				m.set_shader_parameter("alpha", 1.0 - k)
 			"spark":
-				node.scale = Vector3.ONE * it["s"] * (1.0 + k)
-				_fade(node, it["c"], 1.0 - k)
+				node.scale = Vector3.ONE * it["s"] * (1.2 + k)
+				m.set_shader_parameter("alpha", 1.0 - k)
 			"beam":
 				var w: float = it["r"] * (1.0 - k * 0.7)
-				node.scale = Vector3(w, 12.0, w)
-				_fade(node, it["c"], 1.0 - k)
+				node.scale = Vector3(w, 6.0, w)
+				m.set_shader_parameter("alpha", 1.0 - k)
+			"aura":
+				var u = it["u"]
+				if u == null or not is_instance_valid(u) or u.dead:
+					done = true
+				else:
+					node.position = u.position + Vector3(0, 0.09, 0)
+					node.scale = Vector3.ONE * it["r"]
+					node.rotation.y += delta * 3.0
+					m.set_shader_parameter("alpha", (0.7 + 0.3 * sin(it["t"] * 9.0)) * min(1.0, (1.0 - k) * 4.0))
+			"warn":
+				m.set_shader_parameter("alpha", 0.5 + 0.5 * sin(it["t"] * 22.0))
+				m.set_shader_parameter("ringr", 0.95 - 0.1 * k)
+			"fall":
+				node.position = it["from"].lerp(it["to"], k * k)
+				node.scale = Vector3.ONE * (1.7 if it.get("glow", false) else 1.5)
+			"fire":
+				node.scale = Vector3.ONE * it["s"] * (1.0 - k * 0.5)
+				m.set_shader_parameter("alpha", 1.0 - k * k)
 			"proj":
 				var tgt = it["target"]
 				if tgt == null or not is_instance_valid(tgt) or tgt.dead:
@@ -140,21 +246,18 @@ func _process(delta: float) -> void:
 					var aim: Vector3 = tgt.global_position + Vector3(0, tgt.hit_height, 0)
 					var d: Vector3 = aim - node.position
 					var step: float = it["speed"] * delta
+					if it["tail"] != null:
+						it["tail"].position = it["tail"].position.lerp(node.position, 0.45)
 					if d.length() <= step + 0.2:
 						done = true
-						add_spark(aim, it["c"], 0.6)
+						add_spark(aim, it["c"], 0.7 if it["size"] < 0.4 else 1.1)
 						tgt.take_damage(it["dmg"], it["src"] if is_instance_valid(it["src"]) else null)
 					else:
 						node.position += d.normalized() * step
 		if done:
-			node.visible = false
-			pool.append(node)
+			_release(node)
+			if it.get("tail") != null:
+				_release(it["tail"])
 		else:
 			keep.append(it)
 	items = keep
-
-
-func _fade(node: MeshInstance3D, c: Color, a: float) -> void:
-	var m: StandardMaterial3D = node.material_override
-	var e: float = 1.3
-	m.albedo_color = Color(c.r * e, c.g * e, c.b * e, clamp(c.a * a, 0.0, 1.0))

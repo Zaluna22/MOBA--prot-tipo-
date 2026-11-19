@@ -176,16 +176,13 @@ func build_visual(cfg: Dictionary) -> void:
 		play("idle")
 	# team ring on the ground
 	ring = MeshInstance3D.new()
-	var tm := TorusMesh.new()
-	tm.inner_radius = 0.82
-	tm.outer_radius = 1.0
-	tm.rings = 28
-	tm.ring_segments = 4
+	var tm := PlaneMesh.new()
+	tm.size = Vector2(2, 2)
 	ring.mesh = tm
 	var c := team_color()
 	if is_player:
 		c = Color(0.45, 1.0, 0.45)
-	ring.material_override = game.fx.glow_mat(Color(c, 0.85), 1.4)
+	ring.material_override = game.fx.ground_ring_mat(Color(c, 0.9))
 	ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var rs: float = radius * (1.35 if kind == Kind.HERO else 1.2)
 	ring.scale = Vector3(rs, 0.3, rs)
@@ -208,7 +205,7 @@ func build_visual(cfg: Dictionary) -> void:
 		add_child(crystal)
 		range_ring = MeshInstance3D.new()
 		range_ring.mesh = tm
-		range_ring.material_override = game.fx.glow_mat(Color(1.0, 0.25, 0.2, 0.5), 1.2)
+		range_ring.material_override = game.fx.ground_ring_mat(Color(1.0, 0.25, 0.2, 0.6), 0.05, 0.03)
 		range_ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		var rr := atk_range + 0.5
 		range_ring.scale = Vector3(rr, 0.2, rr)
@@ -669,20 +666,22 @@ func cast(i: int) -> bool:
 			face(dash_dir)
 			dash_t = 0.28
 			dash_hit = []
+			game.fx.add_ring(position, 1.2, Color(0.85, 0.95, 1.0, 0.8), 0.4, 1.5)
 			play("dash", 1.6, true)
 		2: # Grito de guerra: buff + heal
 			buff_t = 5.0
 			hp = min(max_hp, hp + max_hp * 0.12)
 			play("cheer", 1.8, true)
 			lock_t = 0.35
-			game.fx.add_ring(position, 1.6, Color(1.0, 0.85, 0.3), 0.6, 1.2)
+			game.fx.add_aura(self, buff_t, Color(1.0, 0.7, 0.2))
+			game.fx.add_flash(position + Vector3(0, 1.0, 0), 1.6, Color(1.0, 0.8, 0.3), 0.3)
 			game.fx.add_text(position, "FÚRIA!", Color(1, 0.85, 0.3))
 		3: # Julgamento: delayed big AoE in front
 			ult_pos = game.clamp_world(p2() + facing * 3.5)
 			ult_t = 0.7
 			lock_t = 0.7
 			play("ult", 1.2, true)
-			game.fx.add_ring(Vector3(ult_pos.x, 0, ult_pos.y), 5.0, Color(1.0, 0.9, 0.5), 0.7, 0.0)
+			game.fx.add_meteor(Vector3(ult_pos.x, 0, ult_pos.y), ult_t, 5.0)
 	return true
 
 
@@ -701,8 +700,11 @@ func dash_tick(delta: float) -> void:
 
 func ult_land() -> void:
 	var p := Vector3(ult_pos.x, 0, ult_pos.y)
-	game.fx.add_beam(p, 2.2, Color(1.0, 0.92, 0.55), 0.7)
-	game.fx.add_nova(p, 5.0, Color(1.0, 0.85, 0.4), 0.6)
+	game.fx.add_nova(p, 5.0, Color(1.0, 0.55, 0.2), 0.6)
+	game.fx.add_flash(p + Vector3(0, 1.5, 0), 2.6, Color(1.0, 0.55, 0.2), 0.3)
+	for i in 3:
+		var a := TAU * i / 3.0 + randf()
+		game.fx.add_fire(p + Vector3(cos(a), 0, sin(a)) * 1.8, 1.3, 0.7)
 	game.shake(0.35)
 	for e in game.enemies_near(ult_pos, team, 5.0):
 		e.take_damage(260.0 + 45.0 * level, self)
