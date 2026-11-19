@@ -78,6 +78,8 @@ func _ready() -> void:
 		Engine.time_scale = 4.0
 	if shot_mode != "":
 		setup_shot()
+	if "--bench" in args:
+		run_bench()
 
 
 func load_configs() -> void:
@@ -631,4 +633,33 @@ func setup_shot() -> void:
 	var img := get_viewport().get_texture().get_image()
 	img.save_png("/tmp/shot_%s.png" % shot_mode)
 	print("SHOT SAVED")
+	get_tree().quit()
+
+
+# ---------------------------------------------------------------- benchmark
+func run_bench() -> void:
+	player.is_bot = true
+	player.set_p2(Vector2(42, 0.5))
+	cam_focus = player.position
+	for i in 3:
+		spawn_wave()
+	var k := 0
+	for o in get_tree().get_nodes_in_group("units"):
+		if o.kind == Unit.Kind.CREEP or o.kind == Unit.Kind.RANGED:
+			o.set_p2(Vector2((44.0 if o.team == 0 else 49.0) + (k % 4) * 0.9, -4.0 + (k % 9) * 1.0))
+			k += 1
+	await get_tree().create_timer(2.0).timeout
+	var frames := 0
+	var t0 := Time.get_ticks_usec()
+	var calls := 0.0
+	var proc := 0.0
+	var phys := 0.0
+	while Time.get_ticks_usec() - t0 < 10000000:
+		await get_tree().process_frame
+		frames += 1
+		calls += Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)
+		proc += Performance.get_monitor(Performance.TIME_PROCESS)
+		phys += Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS)
+	var secs := (Time.get_ticks_usec() - t0) / 1000000.0
+	print("BENCH fps=%.1f draw_calls=%.0f process_ms=%.2f physics_ms=%.2f units=%d" % [frames / secs, calls / frames, proc / frames * 1000.0, phys / frames * 1000.0, get_tree().get_nodes_in_group("units").size()])
 	get_tree().quit()
