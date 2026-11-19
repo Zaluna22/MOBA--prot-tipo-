@@ -105,6 +105,10 @@ func _ready() -> void:
 	for team in 2:
 		for st in structures_of(team):
 			block_cells(st.p2(), st.radius + 0.7)
+	if "--picktest" in args and picked == "":
+		_picktest.call_deferred()
+	elif "--picktest" in args:
+		_picktest_after.call_deferred()
 	if autotest or shot_mode != "" or "--bench" in args:
 		picking = shot_mode == "pick"
 	var roster: Array = ROSTER.duplicate(true)
@@ -997,6 +1001,21 @@ func end_game(won: bool) -> void:
 	get_tree().paused = true
 
 
+func _picktest() -> void:
+	await get_tree().create_timer(2.0, true).timeout
+	print("PICKTEST pressing")
+	var ev := InputEventScreenTouch.new()
+	ev.pressed = true
+	ev.position = hud.pick_rect(3).get_center()
+	Input.parse_input_event(ev)
+
+
+func _picktest_after() -> void:
+	await get_tree().create_timer(3.0, true).timeout
+	print("PICKTEST alive hero=", player.hero_name, " picking=", picking, " paused=", get_tree().paused)
+	get_tree().quit()
+
+
 func pick_hero(k: String) -> void:
 	picked = k
 	picking = false
@@ -1008,7 +1027,18 @@ func change_hero() -> void:
 	restart()
 
 
+var reloading := false
+
+
 func restart() -> void:
+	if reloading:
+		return
+	reloading = true
+	get_viewport().set_input_as_handled()
+	_do_reload.call_deferred()
+
+
+func _do_reload() -> void:
 	get_tree().paused = false
 	get_tree().reload_current_scene()
 

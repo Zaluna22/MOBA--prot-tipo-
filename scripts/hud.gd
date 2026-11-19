@@ -78,6 +78,8 @@ func restart_rect() -> Rect2:
 
 # ---------------------------------------------------------------- input
 func _input(event: InputEvent) -> void:
+	if not is_inside_tree() or game == null or game.reloading:
+		return
 	if event is InputEventScreenTouch:
 		var p: Vector2 = event.position
 		if event.pressed:
@@ -117,10 +119,12 @@ func handle_press(idx: int, p: Vector2) -> void:
 		for i in PICK.size():
 			if pick_rect(i).has_point(p):
 				game.pick_hero(PICK[i][0])
+				return
 		return
 	if end_visible:
 		if restart_rect().grow(20).has_point(p):
 			game.restart()
+			return
 		elif change_rect().grow(14).has_point(p):
 			game.change_hero()
 		return
