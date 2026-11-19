@@ -196,33 +196,49 @@ func _draw_ui() -> void:
 	var s := vs()
 	draw_world_bars()
 	var p = game.player
-	# --- top left: minimap
-	var mm := Rect2(14, 14, 270, 80)
-	ui.draw_rect(mm, Color(0, 0, 0, 0.55))
-	var lane_y0: float = mm.position.y + mm.size.y * 0.5 - mm.size.y * (game.LANE_HALF / 15.0)
-	ui.draw_rect(Rect2(mm.position.x, mm.position.y + mm.size.y * 0.3, mm.size.x, mm.size.y * 0.4), Color(0.55, 0.45, 0.3, 0.9))
-	var rx: float = mm.position.x + game.RIVER_X / game.LANE_LEN * mm.size.x
-	ui.draw_rect(Rect2(rx - 4, mm.position.y, 8, mm.size.y), Color(0.25, 0.5, 0.85, 0.9))
-	for u in get_tree().get_nodes_in_group("units"):
-		var q := Vector2(mm.position.x + u.position.x / game.LANE_LEN * mm.size.x, mm.position.y + mm.size.y * 0.5 + u.position.z / 30.0 * mm.size.y)
+	# --- top left: minimap (whole map, square)
+	var mm := Rect2(14, 14, 168, 168)
+	var k: float = mm.size.x / game.MAP
+	ui.draw_rect(mm, Color(0.08, 0.2, 0.09, 0.85))
+	ui.draw_line(mm.position, mm.end, Color(0.25, 0.5, 0.85, 0.9), 7.0)
+	for l in game.lanes:
+		var pts := PackedVector2Array()
+		for q in l:
+			pts.append(mm.position + q * k)
+		ui.draw_polyline(pts, Color(0.62, 0.5, 0.33, 0.95), 5.0)
+	for c in game.camps:
+		if game.camp_alive(c):
+			ui.draw_circle(mm.position + c["pos"] * k, 3.5, Color(1.0, 0.82, 0.3, 0.9))
+	for u in game.units:
+		if u.dead or u.team == 2:
+			continue
+		var q: Vector2 = mm.position + u.p2() * k
 		var c: Color = u.team_color()
 		match u.kind:
 			Unit.Kind.TOWER, Unit.Kind.BASE:
-				ui.draw_rect(Rect2(q - Vector2(5, 5), Vector2(10, 10)), c.lightened(0.2))
+				ui.draw_rect(Rect2(q - Vector2(4, 4), Vector2(8, 8)), c.lightened(0.2))
 			Unit.Kind.HERO:
-				ui.draw_circle(q, 7.0, Color.WHITE if u.is_player else Color.BLACK)
-				ui.draw_circle(q, 5.0, c)
+				pass
 			_:
-				ui.draw_circle(q, 2.5, c)
+				ui.draw_rect(Rect2(q - Vector2(1.5, 1.5), Vector2(3, 3)), c)
+	for h in game.heroes:
+		if h.dead:
+			continue
+		var q: Vector2 = mm.position + h.p2() * k
+		ui.draw_circle(q, 6.5 if h.is_player else 5.5, Color.WHITE if h.is_player else Color.BLACK)
+		ui.draw_circle(q, 4.5, Color(0.45, 1.0, 0.45) if h.is_player else h.team_color())
+	# camera view
+	var cf: Vector3 = game.cam_focus
+	ui.draw_rect(Rect2(mm.position + Vector2(cf.x - 16, cf.z - 10) * k, Vector2(32, 18) * k), Color(1, 1, 1, 0.6), false, 1.5)
 	ui.draw_rect(mm, Color(1, 1, 1, 0.35), false, 2.0)
 	# --- top center: score + time
 	var mins := int(game.game_time) / 60
 	var secs := int(game.game_time) % 60
 	var tc := Vector2(s.x / 2, 34)
 	ui.draw_rect(Rect2(tc.x - 120, 8, 240, 56), Color(0, 0, 0, 0.5))
-	text(Vector2(tc.x - 112, 48), str(p.kills), 34, Color(0.45, 0.75, 1.0), HORIZONTAL_ALIGNMENT_LEFT)
+	text(Vector2(tc.x - 112, 48), str(game.team_kills[0]), 34, Color(0.45, 0.75, 1.0), HORIZONTAL_ALIGNMENT_LEFT)
 	text(Vector2(tc.x - 60, 42), "%02d:%02d" % [mins, secs], 24, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, 120)
-	text(Vector2(tc.x + 40, 48), str(game.bot.kills), 34, Color(1.0, 0.45, 0.4), HORIZONTAL_ALIGNMENT_RIGHT, 72)
+	text(Vector2(tc.x + 40, 48), str(game.team_kills[1]), 34, Color(1.0, 0.45, 0.4), HORIZONTAL_ALIGNMENT_RIGHT, 72)
 	text(Vector2(tc.x - 60, 60), "onda em %ds" % int(ceil(game.wave_timer)), 14, Color(1, 1, 1, 0.7), HORIZONTAL_ALIGNMENT_CENTER, 120)
 	# --- top right: gold + upgrade
 	ui.draw_rect(Rect2(s.x - 200, 12, 186, 44), Color(0, 0, 0, 0.5))
@@ -298,7 +314,7 @@ func _draw_ui() -> void:
 		ui.draw_rect(hr, Color(0, 0, 0, 0.55 * a))
 		ctext(Vector2(s.x / 2, s.y * 0.62 - 22), "Joystick à esquerda para mover. ATACAR mira o inimigo mais perto.", 18, Color(1, 1, 1, a))
 		ctext(Vector2(s.x / 2, s.y * 0.62 + 8), "Habilidades: NOVA, SALTO, FÚRIA e METEORO (Nv 3).", 18, Color(1, 1, 1, a))
-		ctext(Vector2(s.x / 2, s.y * 0.62 + 34), "Destrua as torres e o castelo vermelho!", 18, Color(1, 0.85, 0.4, a))
+		ctext(Vector2(s.x / 2, s.y * 0.62 + 34), "Selva: pontos amarelos dão ouro e XP. Destrua o castelo vermelho!", 18, Color(1, 0.85, 0.4, a))
 	flush_text()
 	# --- end screen
 	if end_visible:
@@ -320,13 +336,19 @@ func _draw_ui() -> void:
 
 func draw_world_bars() -> void:
 	var cam: Camera3D = game.cam
-	for u in get_tree().get_nodes_in_group("units"):
+	var scr := Rect2(Vector2(-80, -40), vs() + Vector2(160, 80))
+	var cf := Vector2(game.cam_focus.x, game.cam_focus.z)
+	for u in game.units:
 		if u.dead or not u.visible:
+			continue
+		if cf.distance_squared_to(u.p2()) > 900.0:
 			continue
 		var wp: Vector3 = u.position + Vector3(0, u.bar_height, 0)
 		if cam.is_position_behind(wp):
 			continue
 		var sp := cam.unproject_position(wp)
+		if not scr.has_point(sp):
+			continue
 		var w := 36.0
 		var h := 6.0
 		match u.kind:
@@ -338,7 +360,7 @@ func draw_world_bars() -> void:
 				w = 130.0; h = 11.0
 		var r := Rect2(sp.x - w / 2, sp.y - h / 2, w, h)
 		ui.draw_rect(r.grow(2), Color(0, 0, 0, 0.8))
-		var c := Color(0.3, 0.6, 1.0) if u.team == 0 else Color(0.95, 0.25, 0.2)
+		var c: Color = [Color(0.3, 0.6, 1.0), Color(0.95, 0.25, 0.2), Color(1.0, 0.8, 0.25)][u.team]
 		if u.is_player:
 			c = Color(0.4, 0.95, 0.35)
 		ui.draw_rect(Rect2(r.position, Vector2(w * clamp(u.hp / u.max_hp, 0.0, 1.0), h)), c)
