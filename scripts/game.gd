@@ -186,7 +186,7 @@ func load_configs() -> void:
 	var axe: PackedScene = load("res://assets/env/axe_2handed.gltf")
 	var wpn_staff := [staff, "hand_r", Vector3(0, 0.05, 0), Vector3(0, 0, 90), 0.75]
 	var wpn_axe := [axe, "hand_r", Vector3(0, 0.05, 0), Vector3(0, 0, 90), 0.75]
-	cfgs["hero_elfo"] = {"name": "Elfo", "merge": true, "scene": load("res://assets/quaternius/Elf_Male.glb"), "scale": 1.7,
+	cfgs["hero_elfo"] = {"name": "Elfo", "merge": true, "scene": load("res://assets/meshy/elfo.glb"), "scale": 1.7,
 		"lib": ual, "weapon": wpn_staff, "anims": q_ranged,
 		"stats": {"hp": 720, "dmg": 46, "range": 5.0, "cd": 0.85, "speed": 6.2}}
 	cfgs["hero_elfa"] = {"name": "Elfa", "merge": true, "scene": load("res://assets/quaternius/Elf_Female.glb"), "scale": 1.7,
