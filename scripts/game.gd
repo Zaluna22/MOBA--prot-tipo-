@@ -1211,17 +1211,19 @@ func first_mesh(path: String) -> Array:
 	return out
 
 
-var _nature_mat: StandardMaterial3D
-func nature_mat() -> StandardMaterial3D:
-	if _nature_mat == null:
-		_nature_mat = StandardMaterial3D.new()
-		_nature_mat.vertex_color_use_as_albedo = true
-		_nature_mat.vertex_color_is_srgb = false
-		_nature_mat.roughness = 1.0
-		_nature_mat.rim_enabled = true
-		_nature_mat.rim = 0.25
-		_nature_mat.albedo_color = Color(1.45, 1.45, 1.35)
-	return _nature_mat
+var _nature_mats := {}
+func nature_mat(red := false) -> StandardMaterial3D:
+	if not _nature_mats.has(red):
+		var m := StandardMaterial3D.new()
+		m.albedo_texture = load("res://assets/nature/leaves.png")
+		m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+		m.alpha_scissor_threshold = 0.35
+		m.cull_mode = BaseMaterial3D.CULL_DISABLED
+		m.roughness = 1.0
+		m.albedo_color = Color(1.9, 0.75, 0.45) if red else Color(1.25, 1.25, 1.15)
+		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		_nature_mats[red] = m
+	return _nature_mats[red]
 
 
 func multimesh(path: String, xforms: Array) -> void:
@@ -1235,7 +1237,12 @@ func multimesh(path: String, xforms: Array) -> void:
 		var mmi := MultiMeshInstance3D.new()
 		mmi.multimesh = mm
 		if path.contains("/nature/"):
-			mmi.material_override = nature_mat()
+			var nm: Mesh = mm.mesh.duplicate()
+			for si in nm.get_surface_count():
+				var sm: Material = nm.surface_get_material(si)
+				if sm != null and sm.resource_name.begins_with("leaves"):
+					nm.surface_set_material(si, nature_mat(path.contains("red")))
+			mm.mesh = nm
 		add_child(mmi)
 
 
