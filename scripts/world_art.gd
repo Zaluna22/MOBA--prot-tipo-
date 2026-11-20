@@ -370,13 +370,13 @@ func build_decor() -> void:
 			var side := -1.0 if rng.randf() < 0.5 else 1.0
 			var p: Vector2 = game.lane_point(lane, s) + game.lane_normal(lane, s) * side * (game.LANE_W / 2.0 + 2.6)
 			if game.river_depth(p) > 1.8 and p.distance_to(plaza_center(0)) > 18.0 and p.distance_to(plaza_center(1)) > 18.0:
-				groups["trees_A_small"].append(xf(p, rng.randf_range(1.6, 2.2), rng.randf() * TAU))
+				groups["trees_A_small"].append(xf(p, rng.randf_range(2.6, 3.4), rng.randf() * TAU))
 			s += rng.randf_range(4.0, 7.0)
 	game.multimesh(E + "flag_blue.gltf", flags[0])
 	game.multimesh(E + "flag_red.gltf", flags[1])
 	for k in groups:
 		if groups[k].size() > 0:
-			var path: String = E + ("building_" + k if k.begins_with("barracks") or k.begins_with("well") else k) + ".gltf"
+			var path: String = "res://assets/nature/bush_a.glb" if k == "trees_A_small" else E + ("building_" + k if k.begins_with("barracks") or k.begins_with("well") else k) + ".gltf"
 			game.multimesh(path, groups[k])
 
 

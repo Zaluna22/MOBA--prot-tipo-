@@ -539,7 +539,7 @@ func build_world() -> void:
 func scatter_props() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 11
-	var tree_keys := ["res://assets/env/trees_A_large.gltf", "res://assets/env/trees_B_large.gltf", "res://assets/env/trees_A_medium.gltf"]
+	var tree_keys := ["res://assets/nature/clump_a.glb", "res://assets/nature/clump_b.glb", "res://assets/nature/clump_c.glb"]
 	var rock_keys := ["res://assets/env/rock_single_A.gltf", "res://assets/env/rock_single_B.gltf", "res://assets/env/rock_single_C.gltf"]
 	var groups := {}
 	for k in tree_keys + rock_keys:
@@ -550,7 +550,7 @@ func scatter_props() -> void:
 		var s: float = o[1] * 1.55
 		groups[k].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * s), Vector3(o[0].x, 0, o[0].y)))
 	# thicken jungle clumps with decorative trees around each obstacle (no collision)
-	var deco_keys := ["res://assets/env/trees_B_medium.gltf", "res://assets/env/tree_single_A.gltf", "res://assets/env/tree_single_B.gltf"]
+	var deco_keys := ["res://assets/nature/round_a.glb", "res://assets/nature/pine_a.glb", "res://assets/nature/round_red.glb"]
 	for k in deco_keys:
 		groups[k] = []
 	for o in obstacles:
@@ -564,7 +564,7 @@ func scatter_props() -> void:
 					near_camp = true
 			if near_camp:
 				continue
-			groups[deco_keys[rng.randi_range(0, 2)]].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * rng.randf_range(2.0, 3.0)), Vector3(dp.x, 0, dp.y)))
+			groups[deco_keys[0 if rng.randf() < 0.5 else (1 if rng.randf() < 0.75 else 2)]].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * rng.randf_range(2.0, 3.0)), Vector3(dp.x, 0, dp.y)))
 	# border forest outside the playable square
 	var t := -12.0
 	while t < MAP + 12.0:
@@ -1211,6 +1211,19 @@ func first_mesh(path: String) -> Array:
 	return out
 
 
+var _nature_mat: StandardMaterial3D
+func nature_mat() -> StandardMaterial3D:
+	if _nature_mat == null:
+		_nature_mat = StandardMaterial3D.new()
+		_nature_mat.vertex_color_use_as_albedo = true
+		_nature_mat.vertex_color_is_srgb = false
+		_nature_mat.roughness = 1.0
+		_nature_mat.rim_enabled = true
+		_nature_mat.rim = 0.25
+		_nature_mat.albedo_color = Color(1.45, 1.45, 1.35)
+	return _nature_mat
+
+
 func multimesh(path: String, xforms: Array) -> void:
 	for part in first_mesh(path):
 		var mm := MultiMesh.new()
@@ -1221,6 +1234,8 @@ func multimesh(path: String, xforms: Array) -> void:
 			mm.set_instance_transform(i, xforms[i] * part[1])
 		var mmi := MultiMeshInstance3D.new()
 		mmi.multimesh = mm
+		if path.contains("/nature/"):
+			mmi.material_override = nature_mat()
 		add_child(mmi)
 
 
