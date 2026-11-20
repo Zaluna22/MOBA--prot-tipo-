@@ -18,7 +18,7 @@ const FOUNTAIN_POS := [Vector2(7, 133), Vector2(133, 7)]
 const LANE_NAMES := ["TOPO", "MEIO", "BAIXO"]
 const CAMP_POS := [Vector2(33, 70), Vector2(70, 107), Vector2(70, 33), Vector2(107, 70)]
 ## [config key, lane] - first three are blue (index 0 = player), last three red
-const ROSTER := [["elfo", 1], ["elfa", 2], ["cavaleiro", 0], ["orc", 1], ["orca", 0], ["barbaro", 2]]
+const ROSTER := [["elfo", 1], ["elfa", 2], ["cavaleiro", 0], ["orc", 1], ["orca", 0], ["acougueiro", 2]]
 
 var lanes: Array = []
 var lane_cum: Array = []
@@ -112,10 +112,15 @@ func _ready() -> void:
 	if autotest or shot_mode != "" or "--bench" in args:
 		picking = shot_mode == "pick"
 	var roster: Array = ROSTER.duplicate(true)
+	var found := false
 	for j in roster.size():
-		if roster[j][0] == picked and j != 0:
-			roster[j][0] = roster[0][0]
-			roster[0][0] = picked
+		if roster[j][0] == picked:
+			found = true
+			if j != 0:
+				roster[j][0] = roster[0][0]
+				roster[0][0] = picked
+	if picked != "" and not found and cfgs.has("hero_" + picked):
+		roster[0][0] = picked
 	for i in roster.size():
 		var team := 0 if i < 3 else 1
 		var key: String = "hero_" + roster[i][0]
@@ -204,6 +209,18 @@ func load_configs() -> void:
 	cfgs["hero_barbaro"] = {"name": "Bárbaro", "merge": true, "scene": load("res://assets/chars/Barbarian.glb"), "scale": 1.0,
 		"hide": ["1H_Axe_Offhand", "Barbarian_Round_Shield", "1H_Axe", "Mug"], "anims": barb_anims,
 		"stats": {"hp": 840, "dmg": 54, "range": 1.4, "cd": 1.0, "speed": 6.0}}
+	# Açougueiro: placeholder = KayKit Barbarian, wider and taller, one-hand axe as cleaver,
+	# until his own Meshy model is rigged.
+	var butcher_anims := hero_anims.duplicate()
+	butcher_anims["spin"] = "1H_Melee_Attack_Slice_Horizontal"
+	butcher_anims["hook"] = "Throw"
+	butcher_anims["cheer"] = "Use_Item"
+	butcher_anims["ult"] = "Dualwield_Melee_Attack_Chop"
+	butcher_anims["run"] = "Running_B"
+	cfgs["hero_acougueiro"] = {"name": "Açougueiro", "merge": true, "scene": load("res://assets/chars/Barbarian.glb"), "scale": 1.25,
+		"scale_v": Vector3(1.28, 1.12, 1.22),
+		"hide": ["1H_Axe_Offhand", "Barbarian_Round_Shield", "2H_Axe", "Mug", "Barbarian_Cape", "Barbarian_Hat"], "anims": butcher_anims,
+		"stats": {"hp": 950, "dmg": 58, "range": 1.5, "cd": 1.1, "speed": 5.8}}
 	cfgs["creep0"] = {"merge": true, "scene": load("res://assets/chars/Knight.glb"), "scale": 0.66,
 		"hide": ["1H_Sword_Offhand", "Badge_Shield", "Rectangle_Shield", "Spike_Shield", "2H_Sword"],
 		"anims": {"idle": "Idle", "run": "Running_A", "attack": "1H_Melee_Attack_Chop", "death": "Death_A"}}
@@ -976,6 +993,9 @@ func on_unit_died(u, src) -> void:
 			u.xp_value = 120 + 40 * u.level
 			u.start_respawn()
 			fx.add_text(u.position, "ABATIDO!", Color.WHITE)
+			for h in heroes:
+				if h.kit == "acougueiro" and h.team != u.team and not h.dead and (h == src or h.dist_to(u) < 12.0):
+					h.flesh_feed()
 		Unit.Kind.TOWER:
 			if autotest:
 				print("  TOWER DOWN t=%d team=%d lane=%d tier=%d by=%s" % [game_time, u.team, u.lane, u.tier, (src.name + "/" + str(src.kind) + "/" + str(src.team)) if src != null and is_instance_valid(src) else "?"])
@@ -1066,9 +1086,32 @@ func setup_shot() -> void:
 		cam_zoom = 0.6
 	if shot_mode == "far":
 		cam_zoom = 3.2
+	if shot_mode == "hook":
+		cam_zoom = 0.75
 	stage_fight(2)
 	update_camera(1.0)
 	await get_tree().create_timer(1.5).timeout
+	if shot_mode == "hook":
+		# enemy hero 8 m away in the open, then throw and record frames of the pull
+		var foe = heroes[3]
+		foe.is_bot = false
+		var c: Vector2 = player.p2() + Vector2(-5.5, -5.5)
+		for o in units:
+			if o != player and o != foe and not o.dead and o.is_mobile() and o.p2().distance_to(player.p2()) < 12.0:
+				o.set_p2(o.p2() + Vector2(9, 9))
+		foe.set_p2(c)
+		hud.help_time = 0.0
+		for f0 in 4:
+			await get_tree().create_timer(0.05).timeout
+			get_viewport().get_texture().get_image().save_png("/tmp/hookpre_%02d.png" % f0)
+		player.aim_override = (foe.p2() - player.p2()).normalized()
+		player.cast(0)
+		for f in 22:
+			await get_tree().create_timer(0.045).timeout
+			get_viewport().get_texture().get_image().save_png("/tmp/hook_%02d.png" % f)
+		print("HOOK FRAMES SAVED dist=%.1f" % player.dist_to(foe))
+		get_tree().quit()
+		return
 	if shot_mode == "skills":
 		player.level = 3
 		player.cast(2)

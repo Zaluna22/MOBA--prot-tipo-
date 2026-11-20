@@ -89,7 +89,46 @@ const KITS := {
 	"orc": {"names": ["TERREMOTO", "SALTO", "SEDE", "ESMAGAR"], "cd": [7.0, 9.0, 15.0, 45.0], "col": Color(0.95, 0.4, 0.25)},
 	"orca": {"names": ["RAIO", "ESPÍRITO", "CURA", "TEMPESTADE"], "cd": [6.0, 8.0, 16.0, 45.0], "col": Color(0.6, 0.55, 1.0)},
 	"barbaro": {"names": ["REDEMOINHO", "SALTO", "FÚRIA", "MACHADO"], "cd": [6.0, 9.0, 15.0, 42.0], "col": Color(1.0, 0.65, 0.2)},
+	"acougueiro": {"names": ["GANCHO", "PODRIDÃO", "ESCUDO DE CARNE", "DESMEMBRAR"], "cd": [13.0, 1.0, 14.0, 40.0], "col": Color(0.9, 0.3, 0.28)},
 }
+## Skills that use drag-to-aim on the button (others cast on press).
+const AIMED := {
+	"elfo": [false, true, false, true], "elfa": [true, true, false, true], "cavaleiro": [false, true, false, false],
+	"orc": [false, true, false, true], "orca": [false, true, false, true], "barbaro": [false, true, false, true],
+	"acougueiro": [true, false, false, true],
+}
+const HOOK_RANGE := 11.0
+const HOOK_SPEED := 30.0
+const HOOK_BACK := 24.0
+
+# Açougueiro: hook + devour
+var hook_state := 0  # 0 idle, 1 flying out, 2 pulling back
+var hook_pos := Vector2.ZERO
+var hook_dir := Vector2.ZERO
+var hook_len := 0.0
+var hook_victim = null
+var hook_chain: MultiMeshInstance3D
+var hook_head: MeshInstance3D
+var dev_t := 0.0
+var dev_target = null
+var aim_override := Vector2.ZERO
+var rot_on := false
+var rot_ring: MeshInstance3D
+var rot_fx_t := 0.0
+var flesh := 0  # Pilha de Carne stacks
+const ROT_R := 3.2
+
+
+func skill_range(i: int) -> float:
+	if kit == "acougueiro":
+		return [HOOK_RANGE, 0.0, 0.0, 3.5][i]
+	if i == 1:
+		return 6.5 if (kit == "elfo" or kit == "orca") else 6.0
+	if i == 3:
+		return 15.0 if kit == "elfa" else 4.5
+	if i == 0 and kit == "elfa":
+		return 4.5
+	return 0.0
 
 
 func set_kit(k: String) -> void:
@@ -172,7 +211,7 @@ func setup(cfg: Dictionary) -> void:
 func build_visual(cfg: Dictionary) -> void:
 	var scn: PackedScene = cfg["scene"]
 	model = scn.instantiate()
-	model.scale = Vector3.ONE * cfg["scale"]
+	model.scale = cfg.get("scale_v", Vector3.ONE * cfg["scale"])
 	add_child(model)
 	var shadows: bool = not game.low_quality and (kind == Kind.HERO or kind == Kind.TOWER or kind == Kind.BASE)
 	for mi in model.find_children("*", "MeshInstance3D", true, false):
@@ -297,6 +336,8 @@ func stun(t: float) -> void:
 	if kind == Kind.TOWER or kind == Kind.BASE or dead:
 		return
 	stun_t = max(stun_t, t)
+	hook_cancel()
+	dev_t = 0.0
 	if game.fx != null:
 		game.fx.add_text(position, "ATORDOADO", Color(1, 1, 0.6))
 
@@ -388,13 +429,13 @@ func try_attack(t) -> bool:
 	return true
 
 
-func take_damage(amount: float, src) -> void:
+func take_damage(amount: float, src, pure := false) -> void:
 	if dead or invulnerable:
 		return
 	if (kind == Kind.TOWER or kind == Kind.BASE) and src != null and is_instance_valid(src) and src.kind == Kind.HERO:
 		amount *= 0.6
-	if armor_t > 0:
-		amount *= 0.5
+	if armor_t > 0 and not pure:
+		amount *= 0.3 if kit == "acougueiro" else 0.5
 	if src != null and is_instance_valid(src) and src.kind == Kind.HERO and src.ls_t > 0 and not src.dead:
 		src.hp = min(src.max_hp, src.hp + amount * 0.35)
 	hp -= amount
@@ -414,6 +455,9 @@ func take_damage(amount: float, src) -> void:
 
 func die(src) -> void:
 	dead = true
+	hook_cancel()
+	dev_t = 0.0
+	set_rot(false)
 	pending_hit = null
 	target = null
 	ring.visible = false
@@ -523,6 +567,13 @@ func hero_tick(delta: float) -> void:
 		ult_t -= delta
 		if ult_t < 0:
 			ult_land()
+	if hook_state != 0:
+		hook_tick(delta)
+	if rot_on:
+		rot_tick(delta)
+	if dev_t > 0:
+		devour_tick(delta)
+		return
 	if dash_t > 0:
 		dash_tick(delta)
 		return
@@ -597,10 +648,10 @@ func bot_ai(delta: float) -> void:
 		if hp_frac() >= 0.92:
 			retreating = false
 		else:
-			if foe != null and dist_to(foe) < 5.0 and cds[1] <= 0:
+			if foe != null and dist_to(foe) < 5.0 and cds[1] <= 0 and kit != "acougueiro":
 				facing = (home - p2()).normalized()
 				cast(1)
-			elif foe != null and dist_to(foe) < 3.4 and cds[0] <= 0:
+			elif foe != null and dist_to(foe) < 3.4 and cds[0] <= 0 and kit != "acougueiro":
 				cast(0)
 			if not nav_to(home, delta):
 				idle()
@@ -656,6 +707,8 @@ func use_skills(foe) -> void:
 	react_t -= get_physics_process_delta_time()
 	if react_t > 0:
 		return
+	if kit == "acougueiro" and butcher_skills(foe):
+		return
 	var near: Array = game.enemies_near(p2(), team, 3.6)
 	var lane_near := 0
 	for e in near:
@@ -672,11 +725,11 @@ func use_skills(foe) -> void:
 		if cds[2] <= 0 and dist_to(foe) < 6.0:
 			cast(2)
 			react_t = 0.3
-		elif cds[3] <= 0 and level >= 3 and dist_to(foe) < 6.5:
+		elif cds[3] <= 0 and level >= 3 and dist_to(foe) < (3.0 if kit == "acougueiro" else 6.5):
 			facing = (foe.p2() - p2()).normalized()
 			cast(3)
 			react_t = 0.5
-		elif cds[1] <= 0 and foe.hp_frac() < 0.4 and dist_to(foe) > 3.0 and not game.is_unsafe(self, foe.p2()):
+		elif cds[1] <= 0 and kit != "acougueiro" and foe.hp_frac() < 0.4 and dist_to(foe) > 3.0 and not game.is_unsafe(self, foe.p2()):
 			facing = (foe.p2() - p2()).normalized()
 			cast(1)
 			react_t = 0.3
@@ -722,7 +775,8 @@ func pick_bot_target(foe):
 
 # ---------------------------------------------------------------- skills
 func cast(i: int) -> bool:
-	if kind != Kind.HERO or dead or cds[i] > 0 or dash_t > 0 or stun_t > 0:
+	if kind != Kind.HERO or dead or cds[i] > 0 or dash_t > 0 or stun_t > 0 or dev_t > 0:
+		aim_override = Vector2.ZERO
 		return false
 	if i == 3 and level < 3:
 		return false
@@ -743,6 +797,10 @@ func cast(i: int) -> bool:
 
 
 func _aim_dir() -> Vector2:
+	if aim_override.length() > 0.01:
+		var a := aim_override.normalized()
+		aim_override = Vector2.ZERO
+		return a
 	var d := move_input if move_input.length() > 0.15 else facing
 	if not is_bot and move_input.length() <= 0.15 and target != null and is_instance_valid(target) and not target.dead:
 		d = target.p2() - p2()
@@ -784,6 +842,8 @@ func _blink(d: Vector2, dist: float, c: Color) -> void:
 
 func _cast_q(c: Color, lv: float, aim: Vector2) -> void:
 	match kit:
+		"acougueiro":
+			hook_throw(aim)
 		"elfo", "barbaro":
 			var r := 3.6
 			play("spin", 1.6, true)
@@ -847,6 +907,8 @@ func _cast_q(c: Color, lv: float, aim: Vector2) -> void:
 
 func _cast_w(c: Color, lv: float, aim: Vector2) -> void:
 	match kit:
+		"acougueiro":
+			set_rot(not rot_on)
 		"elfo":
 			_blink(aim, 6.5, c)
 		"orca":
@@ -862,6 +924,12 @@ func _cast_w(c: Color, lv: float, aim: Vector2) -> void:
 func _cast_e(c: Color, lv: float) -> void:
 	lock_t = 0.35
 	match kit:
+		"acougueiro":
+			armor_t = 4.0 + 0.2 * lv
+			play("cheer", 1.6, true)
+			game.fx.add_aura(self, armor_t, Color(0.95, 0.35, 0.3))
+			game.fx.add_flash(position + Vector3(0, 1.2, 0), 1.6, Color(1.0, 0.45, 0.35), 0.3)
+			game.fx.add_text(position, "ESCUDO DE CARNE!", Color(1, 0.6, 0.5))
 		"elfo":
 			armor_t = 4.0
 			hp = min(max_hp, hp + max_hp * 0.08)
@@ -906,6 +974,27 @@ func _cast_e(c: Color, lv: float) -> void:
 func _cast_r(c: Color, lv: float, aim: Vector2) -> void:
 	face(aim)
 	match kit:
+		"acougueiro":
+			# grab the closest enemy in front and chew on it: stun + damage over time, heals
+			var at: Vector2 = p2() + aim * 1.5
+			var best = null
+			for e in game.enemies_near(at, team, 2.6):
+				if not (e.kind == Kind.HERO or e.kind == Kind.CREEP or e.kind == Kind.RANGED):
+					continue
+				var sc: float = e.p2().distance_to(at) - (2.0 if e.kind == Kind.HERO else 0.0)
+				if best == null or sc < best[0]:
+					best = [sc, e]
+			if best == null:
+				cds[3] = 1.0
+				game.fx.add_text(position, "NINGUÉM PERTO", Color(1, 1, 1, 0.8))
+				return
+			dev_target = best[1]
+			dev_t = 2.4
+			face(dev_target.p2() - p2())
+			play("ult", 1.0, true)
+			game.fx.add_flash(dev_target.position + Vector3(0, 1.0, 0), 1.6, Color(0.8, 0.05, 0.05), 0.4)
+			game.fx.add_text(dev_target.position, "DESMEMBRAR!", Color(1, 0.3, 0.3))
+			game.shake(0.25)
 		"elfo", "orca":
 			ult_pos = game.clamp_world(p2() + aim * 3.5)
 			ult_t = 0.7
@@ -1063,3 +1152,284 @@ func reset_creep() -> void:
 	if anim != null:
 		anim.active = true
 	play("idle", 1.0, true)
+
+
+# ---------------------------------------------------------------- Açougueiro hook
+func hook_throw(aim: Vector2) -> void:
+	face(aim)
+	hook_dir = aim.normalized()
+	hook_len = 0.6
+	hook_pos = p2() + hook_dir * hook_len
+	hook_victim = null
+	hook_state = 1
+	lock_t = 0.3
+	if game.autotest:
+		print("  HOOK THROW t=%d by=%s" % [game.game_time, hero_name])
+	play("hook", 1.6, true)
+	_hook_visual(true)
+
+
+func hook_cancel() -> void:
+	if hook_state == 0:
+		return
+	hook_state = 0
+	hook_victim = null
+	_hook_visual(false)
+
+
+## First living unit (any team, not structures) touching the hook between a and b.
+func _hook_hit(a: Vector2, b: Vector2):
+	var best = null
+	var bt := INF
+	var ab := b - a
+	var l2 := ab.length_squared()
+	for o in game.units:
+		if o == self or o.dead or not o.is_mobile() or o.invulnerable:
+			continue
+		var op: Vector2 = o.p2()
+		var t: float = clamp((op - a).dot(ab) / l2, 0.0, 1.0) if l2 > 0.0001 else 0.0
+		var r: float = o.radius + 0.45
+		if op.distance_squared_to(a + ab * t) < r * r and t < bt:
+			bt = t
+			best = o
+	return best
+
+
+func hook_tick(delta: float) -> void:
+	var me := p2()
+	if hook_state == 1:
+		var prev := hook_pos
+		hook_len = min(HOOK_RANGE, hook_len + HOOK_SPEED * delta)
+		hook_pos = me + hook_dir * hook_len
+		var hit = _hook_hit(prev, hook_pos)
+		if hit != null:
+			hook_victim = hit
+			if game.autotest:
+				print("  HOOK HIT t=%d by=%s victim_kind=%d ally=%s" % [game.game_time, hero_name, hit.kind, hit.team == team])
+			hook_pos = hit.p2()
+			hook_state = 2
+			var hp3 := Vector3(hook_pos.x, hit.hit_height, hook_pos.y)
+			if hit.team != team:
+				hit.take_damage(120.0 + 25.0 * level, self, true)
+				game.fx.add_flash(hp3, 1.3, Color(0.9, 0.1, 0.1), 0.3)
+				game.fx.add_text(hit.position, "FISGADO!", Color(1, 0.45, 0.35))
+				game.shake(0.15)
+			else:
+				game.fx.add_flash(hp3, 1.3, Color(0.5, 1.0, 0.6), 0.3)
+				game.fx.add_text(hit.position, "RESGATE!", Color(0.6, 1, 0.6))
+			if hit.kind == Kind.HERO:
+				hit.dash_t = 0.0
+				hit.hook_cancel()
+		elif hook_len >= HOOK_RANGE:
+			hook_state = 2
+	elif hook_state == 2:
+		var v = hook_victim
+		if v != null and (not is_instance_valid(v) or v.dead):
+			v = null
+			hook_victim = null
+		var d := me - hook_pos
+		var stop: float = radius + (v.radius if v != null else 0.0) + 0.25
+		var step := HOOK_BACK * delta
+		if d.length() <= stop + step:
+			if v != null:
+				v.set_p2(game.clamp_world(me - d.normalized() * stop) if d.length() > 0.01 else v.p2())
+				if v.team != team:
+					v.stun(0.5)
+			hook_state = 0
+			hook_victim = null
+			_hook_visual(false)
+			return
+		hook_pos += d.normalized() * step
+		if v != null:
+			v.set_p2(game.clamp_world(hook_pos))
+			v.stun_t = max(v.stun_t, 0.12)
+			v.face(d)
+	_hook_draw()
+
+
+func _hook_visual(on: bool) -> void:
+	if on and hook_chain == null:
+		var link := TorusMesh.new()
+		link.inner_radius = 0.07
+		link.outer_radius = 0.15
+		link.rings = 6
+		link.ring_segments = 4
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(0.42, 0.42, 0.45)
+		mat.metallic = 0.7
+		mat.roughness = 0.35
+		link.material = mat
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = link
+		mm.instance_count = 72
+		hook_chain = MultiMeshInstance3D.new()
+		hook_chain.multimesh = mm
+		hook_chain.top_level = true
+		hook_chain.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(hook_chain)
+		hook_head = MeshInstance3D.new()
+		var hm := TorusMesh.new()
+		hm.inner_radius = 0.22
+		hm.outer_radius = 0.38
+		hm.rings = 8
+		hm.ring_segments = 5
+		var hmat := mat.duplicate()
+		hmat.albedo_color = Color(0.7, 0.68, 0.66)
+		hm.material = hmat
+		hook_head.mesh = hm
+		var tip := MeshInstance3D.new()
+		var pm := PrismMesh.new()
+		pm.size = Vector3(0.22, 0.45, 0.08)
+		pm.material = hmat
+		tip.mesh = pm
+		tip.position = Vector3(0.3, 0.0, 0.18)
+		tip.rotation_degrees = Vector3(90, 0, 0)
+		hook_head.add_child(tip)
+		hook_head.top_level = true
+		hook_head.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(hook_head)
+	if hook_chain != null:
+		hook_chain.visible = on
+		hook_head.visible = on
+		if on:
+			_hook_draw()
+
+
+func _hook_draw() -> void:
+	if hook_chain == null:
+		return
+	var a := Vector3(position.x, 1.25, position.z) + Vector3(facing.x, 0, facing.y) * 0.5
+	var b := Vector3(hook_pos.x, 1.0, hook_pos.y)
+	var d := b - a
+	var l := d.length()
+	var fwd := d / l if l > 0.01 else Vector3(facing.x, 0, facing.y)
+	var side := fwd.cross(Vector3.UP).normalized()
+	var up := side.cross(fwd).normalized()
+	var mm := hook_chain.multimesh
+	var n: int = mini(mm.instance_count, int(l / 0.24) + 1)
+	mm.visible_instance_count = n
+	for i in n:
+		var p := a + fwd * (0.24 * i)
+		var bs := Basis(fwd * 1.5, up, side) if i % 2 == 0 else Basis(fwd * 1.5, side, -up)
+		mm.set_instance_transform(i, Transform3D(bs, p))
+	hook_head.global_transform = Transform3D(Basis(fwd, side, -up), b + fwd * 0.2)
+
+
+func devour_tick(delta: float) -> void:
+	dev_t -= delta
+	var t = dev_target
+	if t == null or not is_instance_valid(t) or t.dead or dist_to(t) > 4.5 or (not is_bot and move_input.length() > 0.6):
+		dev_t = 0.0
+		dev_target = null
+		play("idle")
+		return
+	face(t.p2() - p2())
+	t.stun_t = max(t.stun_t, 0.15)
+	var d: float = (115.0 + 20.0 * level) * delta
+	t.take_damage(d, self)
+	hp = min(max_hp, hp + d * 0.5)
+	if int(dev_t * 10.0) % 4 == 0 and int((dev_t + delta) * 10.0) % 4 != 0:
+		game.fx.add_spark(t.position + Vector3(0, t.hit_height, 0), Color(0.85, 0.05, 0.05), 0.6)
+		play("attack", 1.4, true)
+	if dev_t <= 0:
+		dev_target = null
+		play("idle")
+
+
+## Bot Açougueiro: hook (clear line) an enemy hero or a dying ally, rot when enemies are close,
+## flesh shield when hurt in a fight, dismember an adjacent hero. Always handles its own skills.
+func butcher_skills(foe) -> bool:
+	var close: Array = game.enemies_near(p2(), team, ROT_R)
+	var want_rot := false
+	for e in close:
+		if e.kind == Kind.HERO or (e.team != 2 and close.size() >= 2) or jungle_camp != null:
+			want_rot = true
+	if hp_frac() < 0.25:
+		want_rot = false
+	if want_rot != rot_on and cds[1] <= 0:
+		cast(1)
+		react_t = 0.2
+		return true
+	if foe != null and dist_to(foe) < 6.0 and cds[2] <= 0 and hp_frac() < 0.7:
+		cast(2)
+		react_t = 0.3
+		return true
+	if foe != null and cds[3] <= 0 and level >= 3 and dist_to(foe) < 3.0:
+		aim_override = (foe.p2() - p2()).normalized()
+		cast(3)
+		react_t = 0.5
+		return true
+	if cds[0] > 0 or hook_state != 0:
+		return true
+	var cand = null
+	if foe != null:
+		var d := dist_to(foe)
+		if d > 3.0 and d < HOOK_RANGE - 0.5 and (foe.hp_frac() < 0.7 or hp_frac() > 0.5):
+			cand = foe
+	if cand == null:
+		for a in game.heroes:
+			if a != self and a.team == team and not a.dead and a.hp_frac() < 0.25 and dist_to(a) > 4.0 and dist_to(a) < HOOK_RANGE - 0.5 \
+					and game.heroes_near(a.p2(), 1 - team, 6.0) > 0:
+				cand = a
+				break
+	if cand == null:
+		return true
+	var aim: Vector2 = cand.p2() - p2()
+	if cand.cur_anim == cand.anims.get("run", "-"):
+		aim += cand.facing * cand.move_speed() * aim.length() / HOOK_SPEED * 0.8
+	var first = _hook_hit(p2() + aim.normalized() * 0.6, p2() + aim.normalized() * min(aim.length() + 1.0, HOOK_RANGE))
+	if first != cand:
+		return true
+	aim_override = aim.normalized()
+	if cast(0):
+		react_t = 0.4
+	return true
+
+
+# ---------------------------------------------------------------- Açougueiro rot + flesh heap
+func set_rot(on: bool) -> void:
+	rot_on = on
+	if on and rot_ring == null:
+		rot_ring = MeshInstance3D.new()
+		var pm := PlaneMesh.new()
+		pm.size = Vector2(2, 2)
+		rot_ring.mesh = pm
+		rot_ring.material_override = game.fx.ground_ring_mat(Color(0.45, 0.85, 0.2, 0.75), 0.22, 0.12)
+		rot_ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		rot_ring.scale = Vector3(ROT_R, 1, ROT_R)
+		rot_ring.position.y = 0.07
+		add_child(rot_ring)
+	if rot_ring != null:
+		rot_ring.visible = on
+	if on and game.fx != null:
+		game.fx.add_text(position, "PODRIDÃO", Color(0.6, 1, 0.35))
+
+
+func rot_tick(delta: float) -> void:
+	var d: float = (30.0 + 6.0 * level) * delta
+	for e in game.enemies_near(p2(), team, ROT_R):
+		if e.kind == Kind.TOWER or e.kind == Kind.BASE:
+			continue
+		e.take_damage(d, self)
+		e.slow(0.3)
+	hp = max(1.0, hp - 8.0 * delta)
+	rot_fx_t -= delta
+	if rot_fx_t <= 0:
+		rot_fx_t = 0.35
+		var a := randf() * TAU
+		game.fx.add_spark(position + Vector3(cos(a) * 1.6, 0.5, sin(a) * 1.6), Color(0.5, 0.9, 0.2), 0.7)
+	if rot_ring != null:
+		rot_ring.rotation.y += delta * 0.8
+
+
+## Pilha de Carne: an enemy hero dying near the butcher (or by his hand) feeds him for good.
+func flesh_feed() -> void:
+	flesh += 1
+	if game.autotest:
+		print("  FLESH %s stacks=%d" % [hero_name, flesh + 0])
+	max_hp += 40
+	hp += 40
+	dmg += 4
+	game.fx.add_text(position, "PILHA DE CARNE +1", Color(1, 0.75, 0.4))
+	game.fx.add_ring(position, 1.6, Color(1.0, 0.6, 0.3), 0.6, 1.0)

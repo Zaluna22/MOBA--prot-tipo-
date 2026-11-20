@@ -20,8 +20,13 @@ var pressed_flash := {}
 var portraits := {}
 var skill_icons := {}
 var forca_icon: Texture2D
+var passive_icon: Texture2D
 var splash_tex: Texture2D
-const KIT_KEYS := ["elfo", "elfa", "cavaleiro", "orc", "orca", "barbaro"]
+const KIT_KEYS := ["elfo", "elfa", "cavaleiro", "orc", "orca", "barbaro", "acougueiro"]
+var aim_finger := -1
+var aim_skill := -1
+var aim_vec := Vector2.ZERO
+const AIM_DEAD := 26.0
 
 
 func _ready() -> void:
@@ -40,6 +45,7 @@ func _ready() -> void:
 			arr.append(load("res://assets/ui/sk_%s_%d.webp" % [k, i]))
 		skill_icons[k] = arr
 	forca_icon = load("res://assets/ui/sk_forca.webp")
+	passive_icon = load("res://assets/ui/sk_acougueiro_p.webp")
 	splash_tex = load("res://assets/ui/splash.webp")
 
 
@@ -89,15 +95,18 @@ func upgrade_rect() -> Rect2:
 
 const PICK := [["elfo", "Mago arcano", "Dano em área e teleporte"], ["elfa", "Caçadora", "Ataque de longe e flecha que atravessa"],
 	["cavaleiro", "Guardião", "Atordoa, aguenta e cura o time"], ["orc", "Brutamontes", "Terremoto, roubo de vida e esmagar"],
-	["orca", "Xamã", "Raio em cadeia, cura e tempestade"], ["barbaro", "Guerreiro", "Redemoinho, fúria e machado gigante"]]
+	["orca", "Xamã", "Raio em cadeia, cura e tempestade"], ["barbaro", "Guerreiro", "Redemoinho, fúria e machado gigante"],
+	["acougueiro", "Tanque caçador", "Gancho puxa inimigo ou aliado"]]
 
 
 func pick_rect(i: int) -> Rect2:
 	var s := vs()
-	var w: float = min(330.0, (s.x - 80.0) / 3.0)
-	var hh: float = min(190.0, (s.y - 170.0) / 2.0)
-	var x0 := s.x / 2 - (w * 3 + 40) / 2
-	return Rect2(x0 + (i % 3) * (w + 20), 110 + (i / 3) * (hh + 20), w, hh)
+	var w: float = min(290.0, (s.x - 90.0) / 4.0)
+	var hh: float = min(200.0, (s.y - 170.0) / 2.0)
+	var row := i / 4
+	var in_row: int = 4 if row == 0 else PICK.size() - 4
+	var x0 := s.x / 2 - (w * in_row + 20 * (in_row - 1)) / 2
+	return Rect2(x0 + (i % 4) * (w + 20), 110 + row * (hh + 20), w, hh)
 
 
 func change_rect() -> Rect2:
@@ -121,11 +130,15 @@ func _input(event: InputEvent) -> void:
 		elif event.index == joy_finger:
 			joy_finger = -1
 			game.player.move_input = Vector2.ZERO
+		elif event.index == aim_finger:
+			release_aim()
 		get_viewport().set_input_as_handled()
 	elif event is InputEventScreenDrag:
 		if event.index == joy_finger:
 			joy_pos = event.position
 			update_joy()
+		elif event.index == aim_finger:
+			aim_vec = event.position - skill_center(aim_skill)
 		get_viewport().set_input_as_handled()
 	elif event is InputEventKey and not event.echo:
 		var k: int = event.keycode
@@ -168,7 +181,13 @@ func handle_press(idx: int, p: Vector2) -> void:
 		return
 	for i in 4:
 		if p.distance_to(skill_center(i)) < 60:
-			press_skill(i)
+			var pl = game.player
+			if Unit.AIMED[pl.kit][i] and pl.cds[i] <= 0 and not (i == 3 and pl.level < 3) and aim_finger == -1:
+				aim_finger = idx
+				aim_skill = i
+				aim_vec = Vector2.ZERO
+			else:
+				press_skill(i)
 			return
 	if upgrade_rect().grow(10).has_point(p):
 		game.buy_upgrade(game.player)
@@ -195,9 +214,31 @@ func press_attack() -> void:
 	pressed_flash["atk"] = 0.15
 
 
+func release_aim() -> void:
+	var i := aim_skill
+	aim_finger = -1
+	aim_skill = -1
+	if i < 0:
+		return
+	if aim_vec.length() > AIM_DEAD:
+		game.player.aim_override = aim_vec.normalized()
+	press_skill(i)
+
+
+## Tap without dragging: the butcher aims at the closest enemy hero in reach.
+func auto_aim(i: int) -> void:
+	var pl = game.player
+	if pl.kit != "acougueiro" or pl.aim_override.length() > 0.01 or pl.move_input.length() > 0.15:
+		return
+	var h = game.nearest_enemy_hero(pl, pl.skill_range(i) + 0.5)
+	if h != null:
+		pl.aim_override = (h.p2() - pl.p2()).normalized()
+
+
 func press_skill(i: int) -> void:
 	if game.game_over:
 		return
+	auto_aim(i)
 	if game.player.cast(i):
 		pressed_flash[i] = 0.15
 
@@ -377,6 +418,8 @@ func _draw_ui() -> void:
 	ui.draw_line(ac - dg * 14 + dg.orthogonal() * 16, ac - dg * 14 - dg.orthogonal() * 16, Color(1, 0.8, 0.35), 7.0)
 	ctext(ac + Vector2(0, 54), "ATACAR", 15, Color(1, 1, 1, 0.85))
 	# --- skills
+	if aim_skill >= 0:
+		draw_aim(p)
 	for i in 4:
 		var c := skill_center(i)
 		var col: Color = SKILL_COLORS[i] if i != 0 else p.kit_color()
@@ -391,12 +434,25 @@ func _draw_ui() -> void:
 		ui.draw_arc(c, 52, 0, TAU, 40, Color(col, 0.9 if cd <= 0 and not locked else 0.35), 3.0)
 		if pressed_flash.has(i):
 			ui.draw_circle(c, 52, Color(1, 1, 1, 0.3))
+		if i == 1 and p.rot_on:
+			ui.draw_arc(c, 56, 0, TAU, 40, Color(0.5, 1.0, 0.25, 0.95), 5.0)
+			ui.draw_circle(c, 46, Color(0.4, 0.9, 0.2, 0.18))
 		if locked:
 			ctext(c + Vector2(0, -6), "Nv 3", 20, Color(1, 1, 1, 0.8))
 		elif cd > 0:
 			ctext(c + Vector2(0, -6), str(int(ceil(cd))), 30, Color.WHITE)
 		ui.draw_rect(Rect2(c.x - 46, c.y + 14, 92, 20), Color(0, 0, 0, 0.55))
-		ctext(c + Vector2(0, 26), p.skill_names()[i], 13 if p.skill_names()[i].length() < 11 else 11, Color(1, 1, 1, 0.95))
+		ctext(c + Vector2(0, 26), p.skill_names()[i], 13 if p.skill_names()[i].length() < 11 else (11 if p.skill_names()[i].length() < 14 else 9), Color(1, 1, 1, 0.95))
+	# --- passive: Pilha de Carne stacks
+	if p.kit == "acougueiro":
+		var pc := skill_center(0) + Vector2(-96, -42)
+		ui.draw_circle(pc, 31, Color(0.08, 0.08, 0.12, 0.85))
+		tex_circle(pc, 27, passive_icon)
+		ui.draw_arc(pc, 30, 0, TAU, 32, Color(1.0, 0.65, 0.35, 0.9), 2.5)
+		ui.draw_circle(pc + Vector2(22, -20), 14, Color(0.75, 0.2, 0.15, 0.95))
+		ctext(pc + Vector2(22, -21), str(p.flesh), 17, Color.WHITE)
+		ctext(pc + Vector2(0, 44), "PILHA DE", 11, Color(1, 0.85, 0.6))
+		ctext(pc + Vector2(0, 57), "CARNE", 11, Color(1, 0.85, 0.6))
 	# --- respawn
 	if p.dead:
 		ctext(Vector2(s.x / 2, s.y * 0.32), "Renascendo em %d" % ceil(p.respawn_timer), 44, Color.WHITE)
@@ -440,9 +496,10 @@ func _draw_ui() -> void:
 			ui.draw_rect(r, Color(col, 0.8), false, 3.0)
 			var cx := r.position.x + r.size.x / 2
 			var nm: String = game.cfgs["hero_" + PICK[i][0]]["name"]
-			ctext(Vector2(cx, r.position.y + 34), nm, 30, Color.WHITE)
-			ctext(Vector2(cx, r.position.y + 66), PICK[i][1], 18, col.lightened(0.2))
-			ctext(Vector2(cx, r.position.y + 96), PICK[i][2], 14, Color(1, 1, 1, 0.8))
+			var tx := (r.position.x + pr * 2 + 20 + r.end.x) / 2
+			ctext(Vector2(tx, r.position.y + 34), nm, 28 if nm.length() < 10 else 24, Color.WHITE)
+			ctext(Vector2(tx, r.position.y + 66), PICK[i][1], 17, col.lightened(0.2))
+			ctext(Vector2(cx, r.position.y + 104), PICK[i][2], 14, Color(1, 1, 1, 0.8))
 			var names: Array = Unit.KITS[PICK[i][0]]["names"]
 			ctext(Vector2(cx, r.position.y + r.size.y - 50), names[0] + " · " + names[1], 13, Color(1, 1, 1, 0.65))
 			ctext(Vector2(cx, r.position.y + r.size.y - 28), names[2] + " · " + names[3], 13, Color(1, 1, 1, 0.65))
@@ -505,3 +562,25 @@ func draw_world_bars() -> void:
 		var sp2 := cam.unproject_position(wp2)
 		var c2: Color = t["c"]
 		ctext(sp2, t["text"], 22, Color(c2, 1.0 - k))
+
+
+## Skill-shot preview while a skill button is dragged: line on the ground + knob.
+func draw_aim(p) -> void:
+	var c := skill_center(aim_skill)
+	var col: Color = p.kit_color()
+	ui.draw_arc(c, 110, 0, TAU, 40, Color(1, 1, 1, 0.35), 3.0)
+	var knob := c + aim_vec.limit_length(110)
+	ui.draw_circle(knob, 26, Color(col, 0.6))
+	var dragging := aim_vec.length() > AIM_DEAD
+	var dir: Vector2 = aim_vec.normalized() if dragging else p.facing
+	var rng: float = p.skill_range(aim_skill)
+	if rng <= 0.0 or game.cam == null:
+		return
+	var from := Vector3(p.position.x, 0.1, p.position.z)
+	var to := from + Vector3(dir.x, 0, dir.y) * rng
+	var a: Vector2 = game.cam.unproject_position(from)
+	var b: Vector2 = game.cam.unproject_position(to)
+	var w := 16.0 if aim_skill == 1 and p.kit == "acougueiro" else 10.0
+	ui.draw_line(a, b, Color(0, 0, 0, 0.35), w + 6)
+	ui.draw_line(a, b, Color(col.lightened(0.3), 0.75 if dragging else 0.35), w)
+	ui.draw_circle(b, w, Color(col.lightened(0.4), 0.9 if dragging else 0.4))
