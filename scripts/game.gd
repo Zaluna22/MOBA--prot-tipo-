@@ -655,7 +655,7 @@ func cull_animations() -> void:
 	for u in units:
 		if u.anim == null:
 			continue
-		var on: bool = c.distance_squared_to(u.p2()) < 34.0 * 34.0
+		var on: bool = c.distance_squared_to(u.p2()) < 40.0 * 40.0
 		if u.anim.active != on:
 			u.anim.active = on
 
@@ -668,7 +668,7 @@ func update_camera(delta: float) -> void:
 		var f := fountain_pos(0)
 		goal = Vector3(f.x + 6, 0, f.y - 6)
 	cam_focus = cam_focus.lerp(goal, clamp(delta * 6.0, 0.0, 1.0))
-	var off := Vector3(0, 15.8, 8.0) * cam_zoom
+	var off := Vector3(0, 20.5, 8.6) * cam_zoom
 	var sh := Vector3.ZERO
 	if shake_t > 0:
 		shake_t -= delta
