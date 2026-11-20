@@ -21,8 +21,10 @@ void fragment() {
 	float st = texture(tiles, wp / 6.5).b;
 	float macro = texture(tiles, wp / 53.0).a;
 	float jungle = (sp.a - 0.1) / 0.9;
-	vec3 grass = mix(vec3(0.08, 0.2, 0.1), vec3(0.24, 0.4, 0.15), clamp(t1.r * 0.8 + macro * 0.45 - 0.1, 0.0, 1.0));
-	grass = mix(grass, grass * vec3(0.72, 0.9, 0.95), jungle);
+	float gv = clamp(t1.r * 0.8 + macro * 0.45 - 0.1, 0.0, 1.0);
+	vec3 grass = mix(vec3(0.13, 0.3, 0.09), vec3(0.36, 0.56, 0.16), gv);
+	grass = mix(grass, vec3(0.55, 0.66, 0.22), smoothstep(0.72, 0.95, t1.r) * 0.35);
+	grass = mix(grass, grass * vec3(0.8, 0.92, 0.85), jungle);
 	vec3 dirt = mix(vec3(0.29, 0.21, 0.13), vec3(0.52, 0.41, 0.27), t1.g);
 	vec3 stone = mix(vec3(0.2, 0.21, 0.22), mix(vec3(0.42, 0.43, 0.44), vec3(0.6, 0.59, 0.55), macro), st);
 	float dirt_w = smoothstep(0.0, 1.0, sp.r + (t1.g - 0.5) * 0.5);
@@ -33,7 +35,7 @@ void fragment() {
 	if (w > 0.02) {
 		float n1 = texture(tiles, wp * 0.07 + TIME * vec2(0.025, 0.018)).a;
 		float n2 = texture(tiles, wp * 0.11 - TIME * vec2(0.016, 0.03)).a;
-		vec3 water = mix(vec3(0.03, 0.13, 0.17), vec3(0.07, 0.27, 0.31), clamp(n1 * 1.4 - 0.2, 0.0, 1.0));
+		vec3 water = mix(vec3(0.05, 0.22, 0.26), vec3(0.12, 0.42, 0.44), clamp(n1 * 1.4 - 0.2, 0.0, 1.0));
 		water += smoothstep(0.62, 0.7, (n1 + n2) * 0.5) * vec3(0.08, 0.16, 0.16);
 		float shore = smoothstep(0.25, 0.5, w) * (1.0 - smoothstep(0.5, 0.75, w));
 		water = mix(water, vec3(0.62, 0.8, 0.78), shore * smoothstep(0.45, 0.6, n2) * 0.7);

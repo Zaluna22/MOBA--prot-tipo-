@@ -549,11 +549,27 @@ func scatter_props() -> void:
 		var k: String = tree_keys[rng.randi_range(0, 2)]
 		var s: float = o[1] * 1.55
 		groups[k].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * s), Vector3(o[0].x, 0, o[0].y)))
+	# thicken jungle clumps with decorative trees around each obstacle (no collision)
+	var deco_keys := ["res://assets/env/trees_B_medium.gltf", "res://assets/env/tree_single_A.gltf", "res://assets/env/tree_single_B.gltf"]
+	for k in deco_keys:
+		groups[k] = []
+	for o in obstacles:
+		for n in 2:
+			var dp: Vector2 = o[0] + Vector2.from_angle(rng.randf() * TAU) * rng.randf_range(1.6, 3.0)
+			if dist_to_lanes(dp) < LANE_W * 0.5 + 2.2 or river_depth(dp) < 2.0:
+				continue
+			var near_camp := false
+			for c in CAMP_POS:
+				if dp.distance_to(c) < 6.0:
+					near_camp = true
+			if near_camp:
+				continue
+			groups[deco_keys[rng.randi_range(0, 2)]].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * rng.randf_range(2.0, 3.0)), Vector3(dp.x, 0, dp.y)))
 	# border forest outside the playable square
 	var t := -12.0
 	while t < MAP + 12.0:
-		for ring in 2:
-			var d := 3.0 + ring * 5.5
+		for ring in 3:
+			var d := 2.0 + ring * 4.5
 			for p in [Vector2(t, -d), Vector2(t, MAP + d), Vector2(-d, t), Vector2(MAP + d, t)]:
 				var k2: String = tree_keys[rng.randi_range(0, 1)]
 				var jp: Vector2 = p + Vector2(rng.randf_range(-1.5, 1.5), rng.randf_range(-1.5, 1.5))
