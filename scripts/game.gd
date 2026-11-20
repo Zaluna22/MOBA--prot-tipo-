@@ -641,7 +641,7 @@ func update_camera(delta: float) -> void:
 		var f := fountain_pos(0)
 		goal = Vector3(f.x + 6, 0, f.y - 6)
 	cam_focus = cam_focus.lerp(goal, clamp(delta * 6.0, 0.0, 1.0))
-	var off := Vector3(0, 14.0, 9.2) * cam_zoom
+	var off := Vector3(0, 15.8, 8.0) * cam_zoom
 	var sh := Vector3.ZERO
 	if shake_t > 0:
 		shake_t -= delta

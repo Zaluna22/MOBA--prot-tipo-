@@ -17,6 +17,11 @@ var end_visible := false
 var end_won := false
 var help_time := 10.0
 var pressed_flash := {}
+var portraits := {}
+var skill_icons := {}
+var forca_icon: Texture2D
+var splash_tex: Texture2D
+const KIT_KEYS := ["elfo", "elfa", "cavaleiro", "orc", "orca", "barbaro"]
 
 
 func _ready() -> void:
@@ -25,8 +30,37 @@ func _ready() -> void:
 	ui = Control.new()
 	ui.set_anchors_preset(Control.PRESET_FULL_RECT)
 	ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ui.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	ui.draw.connect(_draw_ui)
 	add_child(ui)
+	for k in KIT_KEYS:
+		portraits[k] = load("res://assets/ui/p_%s.webp" % k)
+		var arr := []
+		for i in 4:
+			arr.append(load("res://assets/ui/sk_%s_%d.webp" % [k, i]))
+		skill_icons[k] = arr
+	forca_icon = load("res://assets/ui/sk_forca.webp")
+	splash_tex = load("res://assets/ui/splash.webp")
+
+
+## Texture clipped to a circle (polygon with UVs).
+func tex_circle(c: Vector2, r: float, tex: Texture2D, mod := Color.WHITE, zoom := 1.0) -> void:
+	if tex == null:
+		return
+	var pts := PackedVector2Array()
+	var uvs := PackedVector2Array()
+	for j in 32:
+		var a := TAU * j / 32.0
+		var d := Vector2(cos(a), sin(a))
+		pts.append(c + d * r)
+		uvs.append(Vector2(0.5, 0.5) + d * 0.5 / zoom)
+	ui.draw_colored_polygon(pts, mod, uvs, tex)
+
+
+func hero_portrait(h, c: Vector2, r: float, ring: Color) -> void:
+	ui.draw_circle(c, r + 3, Color(0, 0, 0, 0.8))
+	tex_circle(c, r, portraits.get(h.kit), Color(0.35, 0.35, 0.35) if h.dead else Color.WHITE)
+	ui.draw_arc(c, r + 1.5, 0, TAU, 32, ring, 2.5)
 
 
 func vs() -> Vector2:
@@ -282,6 +316,19 @@ func _draw_ui() -> void:
 	text(Vector2(tc.x - 60, 42), "%02d:%02d" % [mins, secs], 24, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, 120)
 	text(Vector2(tc.x + 40, 48), str(game.team_kills[1]), 34, Color(1.0, 0.45, 0.4), HORIZONTAL_ALIGNMENT_RIGHT, 72)
 	text(Vector2(tc.x - 60, 60), "onda em %ds" % int(ceil(game.wave_timer)), 14, Color(1, 1, 1, 0.7), HORIZONTAL_ALIGNMENT_CENTER, 120)
+	var ai := 0
+	var ei := 0
+	for h in game.heroes:
+		var left: bool = h.team == 0
+		var idx: int = ai if left else ei
+		var pc := Vector2(tc.x + (-148 - idx * 44 if left else 148 + idx * 44), 32)
+		hero_portrait(h, pc, 19, Color(0.45, 1.0, 0.45) if h.is_player else h.team_color())
+		if h.dead:
+			ctext(pc + Vector2(0, -2), str(int(ceil(h.respawn_timer))), 18, Color.WHITE)
+		if left:
+			ai += 1
+		else:
+			ei += 1
 	# --- top right: gold + upgrade
 	ui.draw_rect(Rect2(s.x - 200, 12, 186, 44), Color(0, 0, 0, 0.5))
 	ui.draw_circle(Vector2(s.x - 176, 34), 11, Color(1.0, 0.8, 0.2))
@@ -293,12 +340,15 @@ func _draw_ui() -> void:
 	if pressed_flash.has("up"):
 		ui.draw_rect(ur, Color(1, 1, 1, 0.3))
 	ui.draw_rect(ur, Color(1, 0.85, 0.4, 0.8 if can else 0.3), false, 2.0)
-	text(ur.position + Vector2(0, 34), "+FORÇA  %d" % cost, 22, Color(1, 1, 1, 1.0 if can else 0.5), HORIZONTAL_ALIGNMENT_CENTER, ur.size.x)
+	ui.draw_texture_rect(forca_icon, Rect2(ur.position + Vector2(4, 4), Vector2(44, 44)), false, Color(1, 1, 1, 1.0 if can else 0.45))
+	text(ur.position + Vector2(40, 34), "+FORÇA  %d" % cost, 21, Color(1, 1, 1, 1.0 if can else 0.5), HORIZONTAL_ALIGNMENT_CENTER, ur.size.x - 40)
 	# --- bottom center: player hp + xp
 	var bw := minf(420.0, s.x * 0.34)
 	var bx := s.x / 2 - bw / 2
 	var by := s.y - 58
 	ui.draw_rect(Rect2(bx - 4, by - 30, bw + 8, 62), Color(0, 0, 0, 0.55))
+	hero_portrait(p, Vector2(bx - 52, by - 2), 42, p.kit_color())
+	ctext(Vector2(bx - 52, by + 36), str(p.level), 18, Color(1, 0.9, 0.5))
 	text(Vector2(bx, by - 8), "%s  Nv %d" % [p.hero_name, p.level], 20, Color(1, 1, 1, 0.95))
 	if p.buff_t > 0:
 		text(Vector2(bx + bw - 120, by - 8), "FÚRIA %ds" % ceil(p.buff_t), 18, Color(1, 0.8, 0.3), HORIZONTAL_ALIGNMENT_RIGHT, 120)
@@ -334,6 +384,8 @@ func _draw_ui() -> void:
 		ui.draw_circle(c, 52, Color(0.08, 0.08, 0.12, 0.8))
 		ui.draw_circle(c, 46, Color(col.darkened(0.35), 0.95 if not locked else 0.35))
 		var cd: float = p.cds[i]
+		var ready_ic: bool = cd <= 0 and not locked
+		tex_circle(c, 46, skill_icons[p.kit][i], Color.WHITE if ready_ic else Color(0.55, 0.55, 0.55, 0.9))
 		if cd > 0 or locked:
 			pie(c, 46, 1.0 if locked else cd / p.cd_max[i], Color(0, 0, 0, 0.6))
 		ui.draw_arc(c, 52, 0, TAU, 40, Color(col, 0.9 if cd <= 0 and not locked else 0.35), 3.0)
@@ -343,8 +395,7 @@ func _draw_ui() -> void:
 			ctext(c + Vector2(0, -6), "Nv 3", 20, Color(1, 1, 1, 0.8))
 		elif cd > 0:
 			ctext(c + Vector2(0, -6), str(int(ceil(cd))), 30, Color.WHITE)
-		else:
-			ctext(c + Vector2(0, -6), SKILL_KEYS[i], 26, Color(1, 1, 1, 0.9))
+		ui.draw_rect(Rect2(c.x - 46, c.y + 14, 92, 20), Color(0, 0, 0, 0.55))
 		ctext(c + Vector2(0, 26), p.skill_names()[i], 13 if p.skill_names()[i].length() < 11 else 11, Color(1, 1, 1, 0.95))
 	# --- respawn
 	if p.dead:
@@ -373,13 +424,19 @@ func _draw_ui() -> void:
 	flush_text()
 	# --- hero pick
 	if game.picking and not is_portrait():
-		ui.draw_rect(Rect2(Vector2.ZERO, s), Color(0.02, 0.03, 0.06, 0.8))
+		var ts := splash_tex.get_size()
+		var sc: float = max(s.x / ts.x, s.y / ts.y)
+		ui.draw_texture_rect(splash_tex, Rect2((s - ts * sc) / 2, ts * sc), false)
+		ui.draw_rect(Rect2(Vector2.ZERO, s), Color(0.02, 0.03, 0.06, 0.45))
 		ctext(Vector2(s.x / 2, 60), "Escolha seu herói", 42, Color(1, 0.9, 0.6))
 		for i in PICK.size():
 			var r := pick_rect(i)
 			var col: Color = Unit.KITS[PICK[i][0]]["col"]
-			ui.draw_rect(r, Color(0.08, 0.09, 0.13, 0.95))
+			ui.draw_rect(r, Color(0.08, 0.09, 0.13, 0.88))
 			ui.draw_rect(Rect2(r.position, Vector2(r.size.x, 6)), col)
+			var pr: float = minf(36.0, r.size.y * 0.2)
+			tex_circle(r.position + Vector2(pr + 12, pr + 14), pr, portraits[PICK[i][0]])
+			ui.draw_arc(r.position + Vector2(pr + 12, pr + 14), pr + 1, 0, TAU, 32, col, 2.5)
 			ui.draw_rect(r, Color(col, 0.8), false, 3.0)
 			var cx := r.position.x + r.size.x / 2
 			var nm: String = game.cfgs["hero_" + PICK[i][0]]["name"]

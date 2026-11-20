@@ -4,6 +4,11 @@ config_version=5
 [application]
 
 config/icon="res://icon.png"
+boot_splash/image="res://assets/ui/boot_splash.png"
+boot_splash/bg_color=Color(0.05, 0.06, 0.09, 1)
+boot_splash/fullsize=true
+boot_splash/use_filter=true
+boot_splash/show_image=true
 
 config/name="MOBA Prototipo 3D"
 run/main_scene="res://main.tscn"
