@@ -209,17 +209,11 @@ func load_configs() -> void:
 	cfgs["hero_barbaro"] = {"name": "Bárbaro", "merge": true, "scene": load("res://assets/chars/Barbarian.glb"), "scale": 1.0,
 		"hide": ["1H_Axe_Offhand", "Barbarian_Round_Shield", "1H_Axe", "Mug"], "anims": barb_anims,
 		"stats": {"hp": 840, "dmg": 54, "range": 1.4, "cd": 1.0, "speed": 6.0}}
-	# Açougueiro: placeholder = KayKit Barbarian, wider and taller, one-hand axe as cleaver,
-	# until his own Meshy model is rigged.
-	var butcher_anims := hero_anims.duplicate()
-	butcher_anims["spin"] = "1H_Melee_Attack_Slice_Horizontal"
-	butcher_anims["hook"] = "Throw"
-	butcher_anims["cheer"] = "Use_Item"
-	butcher_anims["ult"] = "Dualwield_Melee_Attack_Chop"
-	butcher_anims["run"] = "Running_B"
-	cfgs["hero_acougueiro"] = {"name": "Açougueiro", "merge": true, "scene": load("res://assets/chars/Barbarian.glb"), "scale": 1.25,
-		"scale_v": Vector3(1.28, 1.12, 1.22),
-		"hide": ["1H_Axe_Offhand", "Barbarian_Round_Shield", "2H_Axe", "Mug", "Barbarian_Cape", "Barbarian_Hat"], "anims": butcher_anims,
+	# Açougueiro: Tripo model (decimated, rigged in-sandbox on the UAL skeleton; tools/rig_ac).
+	var butcher_anims := {"idle": "Sword_Idle", "run": "Jog_Fwd", "attack": "Sword_Attack", "death": "Death01",
+		"spin": "Sword_Attack", "dash": "Roll", "cheer": "Spell_Simple_Enter", "ult": "Punch_Cross", "hook": "Spell_Simple_Shoot"}
+	cfgs["hero_acougueiro"] = {"name": "Açougueiro", "merge": true, "scene": load("res://assets/tripo/acougueiro.glb"), "scale": 1.45,
+		"lib": ual, "anims": butcher_anims,
 		"stats": {"hp": 950, "dmg": 58, "range": 1.5, "cd": 1.1, "speed": 5.8}}
 	cfgs["creep0"] = {"merge": true, "scene": load("res://assets/chars/Knight.glb"), "scale": 0.66,
 		"hide": ["1H_Sword_Offhand", "Badge_Shield", "Rectangle_Shield", "Spike_Shield", "2H_Sword"],
