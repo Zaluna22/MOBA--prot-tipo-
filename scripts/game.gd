@@ -531,9 +531,106 @@ func build_world() -> void:
 		fm.material_override = FxScript.ground_ring_mat(Color(Unit.TEAM_COLORS[team], 0.5), 0.35, 0.04)
 		fm.position = Vector3(FOUNTAIN_POS[team].x, 0.04, FOUNTAIN_POS[team].y)
 		add_child(fm)
+	build_brushes()
 	scatter_props()
 	art.build_decor()
 	art.build_blobs()
+
+
+# ---------------------------------------------------------------- tall grass (brush): heroes inside are hidden
+var brushes: Array = []  # [center Vector2, radius]
+var brush_t := 0.0
+
+func build_brushes() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 21
+	for lane in 3:
+		for f in [0.3, 0.42, 0.58, 0.7]:
+			var s: float = lane_len[lane] * f
+			var side := 1.0 if (int(f * 100) + lane) % 2 == 0 else -1.0
+			var c: Vector2 = lane_point(lane, s) + lane_normal(lane, s) * side * (LANE_W / 2.0 + 3.2)
+			if river_depth(c) < 3.5 or c.distance_to(BASE_POS[0]) < 30 or c.distance_to(BASE_POS[1]) < 30:
+				continue
+			var blocked := false
+			for o in obstacles:
+				if o[0].distance_to(c) < 3.6:
+					blocked = true
+			if not blocked:
+				brushes.append([c, 3.4])
+	var mesh := _grass_mesh()
+	var xf: Array = []
+	for b in brushes:
+		for i in 34:
+			var a := rng.randf() * TAU
+			var r: float = sqrt(rng.randf()) * b[1]
+			var p: Vector2 = b[0] + Vector2(cos(a), sin(a)) * r
+			xf.append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * rng.randf_range(0.85, 1.2)), Vector3(p.x, 0, p.y)))
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = mesh
+	mm.instance_count = xf.size()
+	for i in xf.size():
+		mm.set_instance_transform(i, xf[i])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = mm
+	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mmi)
+
+
+func _grass_mesh() -> Mesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for k in 3:
+		var a := PI * k / 3.0
+		var d := Vector3(cos(a), 0, sin(a)) * 0.9
+		var hgt := 1.7
+		var v := [-d, d, d + Vector3(0, hgt, 0), -d + Vector3(0, hgt, 0)]
+		var uv := [Vector2(0, 1), Vector2(1, 1), Vector2(1, 0), Vector2(0, 0)]
+		for idx in [0, 1, 2, 0, 2, 3]:
+			st.set_normal(Vector3.UP)
+			st.set_uv(uv[idx])
+			st.add_vertex(v[idx])
+	var m := StandardMaterial3D.new()
+	m.albedo_texture = load("res://assets/nature/tallgrass.png")
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	m.alpha_scissor_threshold = 0.4
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.albedo_color = Color(1.2, 1.25, 1.1)
+	m.roughness = 1.0
+	st.set_material(m)
+	return st.commit()
+
+
+func brush_of(p: Vector2) -> int:
+	for i in brushes.size():
+		if p.distance_squared_to(brushes[i][0]) < brushes[i][1] * brushes[i][1]:
+			return i
+	return -1
+
+
+## Every 0.2 s: a hero in brush is concealed from the other team unless it attacked
+## recently or an enemy unit stands in the same brush.
+func update_brushes(delta: float) -> void:
+	for h in heroes:
+		h.reveal_t = max(0.0, h.reveal_t - delta)
+	brush_t -= delta
+	if brush_t > 0:
+		return
+	brush_t = 0.2
+	var occ := {}
+	for o in units:
+		if o.dead or o.team == 2:
+			continue
+		var b := brush_of(o.p2())
+		if b >= 0:
+			occ[b * 3 + o.team] = true
+	for h in heroes:
+		var b := -1 if h.dead else brush_of(h.p2())
+		h.in_brush = b
+		h.concealed = b >= 0 and h.reveal_t <= 0.0 and not occ.has(b * 3 + (1 - h.team))
+		var show: bool = h.team == player.team or not h.concealed
+		if h.visible != show and not h.dead:
+			h.visible = show
 
 
 func scatter_props() -> void:
@@ -636,6 +733,8 @@ func _process(delta: float) -> void:
 		perf_acc += (Performance.get_monitor(Performance.TIME_PROCESS) + Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS)) * 1000.0
 		perf_n += 1
 	update_camera(delta)
+	if heroes.size() > 0 and player != null:
+		update_brushes(delta)
 	var keep: Array = []
 	for t in hud_texts:
 		t["t"] += delta
@@ -793,6 +892,8 @@ func separation() -> void:
 func hostile(u, o) -> bool:
 	if o.team == u.team:
 		return false
+	if o.concealed and o.kind == Unit.Kind.HERO:
+		return false
 	if o.team == 2 or u.team == 2:
 		return u.kind == Unit.Kind.HERO or o.kind == Unit.Kind.HERO
 	return true
@@ -836,7 +937,7 @@ func nearest_enemy_hero(u, r: float):
 	var best = null
 	var bd := r
 	for h in heroes:
-		if h.team == u.team or h.dead:
+		if h.team == u.team or h.dead or h.concealed:
 			continue
 		var d: float = u.dist_to(h)
 		if d < bd:
@@ -1099,6 +1200,10 @@ func setup_shot() -> void:
 	if shot_mode == "hook":
 		cam_zoom = 0.75
 	stage_fight(2)
+	if shot_mode == "brush" and brushes.size() > 0:
+		print("BRUSHES ", brushes.size())
+		player.set_p2(brushes[0][0] + Vector2(2.5, 0))
+		cam_focus = player.position
 	update_camera(1.0)
 	await get_tree().create_timer(1.5).timeout
 	if shot_mode == "hook":

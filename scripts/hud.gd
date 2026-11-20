@@ -339,7 +339,7 @@ func _draw_ui() -> void:
 			_:
 				ui.draw_rect(Rect2(q - Vector2(1.5, 1.5), Vector2(3, 3)), c)
 	for h in game.heroes:
-		if h.dead:
+		if h.dead or (h.concealed and h.team != game.player.team):
 			continue
 		var q: Vector2 = mm.position + h.p2() * k
 		ui.draw_circle(q, 6.5 if h.is_player else 5.5, Color.WHITE if h.is_player else Color.BLACK)

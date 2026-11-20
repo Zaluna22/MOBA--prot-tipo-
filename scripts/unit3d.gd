@@ -8,6 +8,9 @@ const TEAM_COLORS := [Color(0.3, 0.6, 1.0), Color(1.0, 0.3, 0.22), Color(1.0, 0.
 
 var game
 var team := 0
+var in_brush := -1
+var concealed := false
+var reveal_t := 0.0
 var kind := Kind.CREEP
 var max_hp := 100.0
 var hp := 100.0
@@ -311,7 +314,7 @@ func is_mobile() -> bool:
 
 
 func is_valid_target(t) -> bool:
-	return t != null and is_instance_valid(t) and not t.dead and t.team != team and not t.invulnerable
+	return t != null and is_instance_valid(t) and not t.dead and t.team != team and not t.invulnerable and not (t.concealed and t.kind == Kind.HERO)
 
 
 func atk_speed_mult() -> float:
@@ -432,6 +435,9 @@ func try_attack(t) -> bool:
 func take_damage(amount: float, src, pure := false) -> void:
 	if dead or invulnerable:
 		return
+	if src != null and is_instance_valid(src) and src.kind == Kind.HERO:
+		src.reveal_t = 1.5
+		src.concealed = false
 	if (kind == Kind.TOWER or kind == Kind.BASE) and src != null and is_instance_valid(src) and src.kind == Kind.HERO:
 		amount *= 0.6
 	if armor_t > 0 and not pure:
