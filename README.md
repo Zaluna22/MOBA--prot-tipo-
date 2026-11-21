@@ -51,3 +51,6 @@ Bots compram seguindo uma rota (à distância / corpo a corpo) e usam Poção e 
 Cada time só vê ao redor das próprias unidades: herói 12 m, creeps 8 m, torres 12 m, base 14 m, Sentinela 14 m e a fonte 16 m.
 Fora disso o mapa escurece, inimigos e acampamentos neutros somem (tela e minimapa) e ninguém pode mirar neles, inclusive os bots.
 Torres e bases inimigas continuam visíveis. O mato alto continua escondendo heróis. Para testar sem névoa: `--nofog`.
+
+## Torres estilo Dota (v0.6.1)
+Torres novas geradas por `tools/build_towers.gd`: Radiant (pedra branca, brilho azul, máscaras douradas e coroa) e Dire (basalto escuro, brilho vermelho, chifres de osso). Para mudar o visual, edite o script e rode `godot --headless -s res://tools/build_towers.gd`.

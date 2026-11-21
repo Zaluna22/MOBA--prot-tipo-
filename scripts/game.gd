@@ -235,8 +235,9 @@ func load_configs() -> void:
 		"anims": {"idle": "Idle", "run": "Running_A", "attack": "Spellcast_Shoot", "death": "Death_A"}}
 	cfgs["ranged2"] = {"merge": true, "scene": load("res://assets/chars/Mage.glb"), "scale": 0.75, "hide": [],
 		"anims": {"idle": "Idle", "run": "Running_A", "attack": "Spellcast_Shoot", "death": "Death_A"}}
-	cfgs["tower0"] = {"scene": load("res://assets/env/building_tower_A_blue.gltf"), "scale": 3.1}
-	cfgs["tower1"] = {"scene": load("res://assets/env/building_tower_A_red.gltf"), "scale": 3.1}
+	# Dota-style towers built by tools/build_towers.gd (Radiant guardian / Dire basalt)
+	cfgs["tower0"] = {"scene": load("res://assets/towers/tower_radiant.scn"), "scale": 1.0}
+	cfgs["tower1"] = {"scene": load("res://assets/towers/tower_dire.scn"), "scale": 1.0}
 	cfgs["base0"] = {"scene": load("res://assets/env/building_castle_blue.gltf"), "scale": 2.4}
 	cfgs["base1"] = {"scene": load("res://assets/env/building_castle_red.gltf"), "scale": 2.4}
 
@@ -261,7 +262,7 @@ func make_unit(kind: int, team: int, pos: Vector2, is_player := false, key := ""
 	u.setup(cfgs[key])
 	u.add_to_group("units")
 	init_vis(u)
-	if kind == Unit.Kind.TOWER or kind == Unit.Kind.BASE:
+	if kind == Unit.Kind.BASE:
 		u.model.rotation.y = PI / 6.0
 	return u
 

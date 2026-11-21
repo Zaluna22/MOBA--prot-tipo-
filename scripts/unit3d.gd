@@ -201,7 +201,7 @@ func setup(cfg: Dictionary) -> void:
 		Kind.TOWER:
 			max_hp = 1700; dmg = 70; atk_range = 9.5; atk_cd = 1.0; speed = 0
 			radius = 1.3; bounty = 150; xp_value = 100; ranged_attack = true
-			hit_height = 3.0; bar_height = 7.6
+			hit_height = 3.0; bar_height = 8.6
 		Kind.BASE:
 			max_hp = 2200; dmg = 50; atk_range = 9.0; atk_cd = 1.0; speed = 0
 			radius = 2.3; bounty = 0; xp_value = 0; ranged_attack = true
@@ -280,14 +280,14 @@ func build_visual(cfg: Dictionary) -> void:
 		ring.visible = false
 		crystal = MeshInstance3D.new()
 		var sm := SphereMesh.new()
-		sm.radius = 0.45 if kind == Kind.TOWER else 0.8
+		sm.radius = 0.32 if kind == Kind.TOWER else 0.8
 		sm.height = sm.radius * 2.6
 		sm.radial_segments = 6
 		sm.rings = 3
 		crystal.mesh = sm
 		crystal.material_override = game.fx.glow_mat(Color(team_color(), 0.95), 2.2)
 		crystal.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		crystal.position.y = 7.4 if kind == Kind.TOWER else 10.6
+		crystal.position.y = 8.1 if kind == Kind.TOWER else 10.6
 		add_child(crystal)
 		range_ring = MeshInstance3D.new()
 		range_ring.mesh = tm
