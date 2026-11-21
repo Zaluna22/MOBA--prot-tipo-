@@ -7,6 +7,10 @@ const Unit := preload("res://scripts/unit3d.gd")
 const FxScript := preload("res://scripts/fx3d.gd")
 const HudScript := preload("res://scripts/hud.gd")
 const ArtScript := preload("res://scripts/world_art.gd")
+const Items := preload("res://scripts/items.gd")
+const WARD_R := 8.0
+const WARD_TIME := 90.0
+const WARD_MAX := 4  # per team; the oldest goes away
 
 const MAP := 140.0
 const FOUNTAIN_R := 9.0
@@ -539,6 +543,7 @@ func build_world() -> void:
 
 # ---------------------------------------------------------------- tall grass (brush): heroes inside are hidden
 var brushes: Array = []  # [center Vector2, radius]
+var wards: Array = []  # {"pos", "team", "t", "node"}
 var brush_t := 0.0
 
 func build_brushes() -> void:
@@ -601,6 +606,70 @@ func _grass_mesh() -> Mesh:
 	return st.commit()
 
 
+## Sentinela (ward): reveals tall grass around it for the team that planted it.
+func place_ward(team: int, pos: Vector2) -> void:
+	pos = push_out(pos, 0.3)
+	var count := 0
+	for w in wards:
+		if w["team"] == team:
+			count += 1
+	if count >= WARD_MAX:
+		for w in wards:
+			if w["team"] == team:
+				w["t"] = 0.0
+				break
+	var root := Node3D.new()
+	var pole := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = 0.08
+	cm.bottom_radius = 0.12
+	cm.height = 1.4
+	pole.mesh = cm
+	pole.position = Vector3(0, 0.7, 0)
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.35, 0.25, 0.15)
+	pole.material_override = m
+	root.add_child(pole)
+	var eye := MeshInstance3D.new()
+	var sm := SphereMesh.new()
+	sm.radius = 0.28
+	sm.height = 0.56
+	eye.mesh = sm
+	eye.position = Vector3(0, 1.55, 0)
+	var em := StandardMaterial3D.new()
+	em.albedo_color = Color(1.0, 0.9, 0.3)
+	em.emission_enabled = true
+	em.emission = Color(1.0, 0.85, 0.3)
+	em.emission_energy_multiplier = 1.5
+	eye.material_override = em
+	root.add_child(eye)
+	var ring := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(WARD_R * 2.0, WARD_R * 2.0)
+	ring.mesh = pm
+	ring.position = Vector3(0, 0.05, 0)
+	ring.material_override = FxScript.ground_ring_mat(Color(1.0, 0.9, 0.3, 0.35), 0.03, 0.02)
+	root.add_child(ring)
+	root.position = Vector3(pos.x, 0, pos.y)
+	root.visible = player == null or team == player.team
+	add_child(root)
+	wards.append({"pos": pos, "team": team, "t": WARD_TIME, "node": root})
+	brush_t = 0.0
+	if player != null and team == player.team:
+		fx.add_ring(root.position, 1.2, Color(1, 0.9, 0.3), 0.5, 1.5)
+
+
+func update_wards(delta: float) -> void:
+	var keep: Array = []
+	for w in wards:
+		w["t"] -= delta
+		if w["t"] > 0:
+			keep.append(w)
+		else:
+			w["node"].queue_free()
+	wards = keep
+
+
 func brush_of(p: Vector2) -> int:
 	for i in brushes.size():
 		if p.distance_squared_to(brushes[i][0]) < brushes[i][1] * brushes[i][1]:
@@ -624,6 +693,10 @@ func update_brushes(delta: float) -> void:
 		var b := brush_of(o.p2())
 		if b >= 0:
 			occ[b * 3 + o.team] = true
+	for w in wards:
+		for i in brushes.size():
+			if w["pos"].distance_to(brushes[i][0]) < WARD_R + brushes[i][1]:
+				occ[i * 3 + w["team"]] = true
 	for h in heroes:
 		var b := -1 if h.dead else brush_of(h.p2())
 		h.in_brush = b
@@ -703,6 +776,7 @@ func _physics_process(delta: float) -> void:
 		wave_timer = WAVE_INTERVAL
 	for h in heroes:
 		h.gold += 1.5 * delta
+	update_wards(delta)
 	update_camps(delta)
 	var t0 := Time.get_ticks_usec()
 	separation()
@@ -718,6 +792,7 @@ func _physics_process(delta: float) -> void:
 		prof.clear()
 		for h in heroes:
 			print("   %s lane=%d pos=%s hp=%d dead=%s ret=%s tgt=%s camp=%s" % [h.hero_name, h.lane, str(h.p2().round()), h.hp, h.dead, h.retreating, (h.target.name if h.target != null and is_instance_valid(h.target) else "-"), h.jungle_camp != null])
+			print("     gold=%d items=%s" % [h.gold, str(h.items.map(func(e): return "-" if e == null else "%s%s" % [e["id"], ("x%d" % e["n"]) if e["n"] > 1 else ""]))])
 		var cc := [[0, 0, 0], [0, 0, 0]]
 		for o in units:
 			if o.lane >= 0 and o.team < 2 and (o.kind == Unit.Kind.CREEP or o.kind == Unit.Kind.RANGED):
@@ -1057,24 +1132,6 @@ func update_invulnerability() -> void:
 		bases[team].invulnerable = not lane_open
 
 
-func upgrade_cost(h) -> int:
-	return 150 + 60 * h.upgrades
-
-
-func buy_upgrade(h) -> void:
-	var cost := upgrade_cost(h)
-	if h.gold < cost or h.dead:
-		return
-	h.gold -= cost
-	h.upgrades += 1
-	h.dmg += 8
-	h.max_hp += 60
-	h.hp += 60
-	fx.add_ring(h.position, 1.4, Color(1, 0.85, 0.3), 0.6, 1.0)
-	if h.is_player or h.dist_to(player) < 20:
-		fx.add_text(h.position, "+FORÇA", Color(1, 0.85, 0.3))
-
-
 func on_unit_died(u, src) -> void:
 	var killer = null
 	if src != null and is_instance_valid(src) and src.kind == Unit.Kind.HERO and src.team != u.team:
@@ -1200,6 +1257,25 @@ func setup_shot() -> void:
 	if shot_mode == "hook":
 		cam_zoom = 0.75
 	stage_fight(2)
+	if shot_mode == "shop":
+		player.set_p2(spawn_pos(0))
+		player.gold = 3200
+		for id in ["botas", "pocao", "pocao", "sentinela", "espada", "blink"]:
+			Items.buy(self, player, id)
+		player.gold += 900
+		player.items[5]["cd"] = 9.0
+		hud.help_time = 0.0
+		hud.shop_open = true
+		cam_focus = player.position
+		update_camera(1.0)
+		await get_tree().create_timer(0.8).timeout
+		get_viewport().get_texture().get_image().save_png("/tmp/shot_shop.png")
+		hud.shop_open = false
+		await get_tree().create_timer(0.3).timeout
+		get_viewport().get_texture().get_image().save_png("/tmp/shot_slots.png")
+		print("SHOT SAVED items=", player.items)
+		get_tree().quit()
+		return
 	if shot_mode == "brush" and brushes.size() > 0:
 		print("BRUSHES ", brushes.size())
 		player.set_p2(brushes[0][0] + Vector2(2.5, 0))
