@@ -31,6 +31,10 @@ const AIM_DEAD := 26.0
 var shop_open := false
 var shop_msg := ""
 var shop_msg_t := 0.0
+var alert_t := 0.0
+var alert_msg := ""
+var alert_cd := {}
+var alert_scan := 0.0
 var sell_mode := false
 const SHOP_COLS := 4
 
@@ -347,6 +351,11 @@ func _process(delta: float) -> void:
 	if not get_tree().paused:
 		help_time -= delta
 	shop_msg_t = maxf(0.0, shop_msg_t - delta)
+	alert_t = maxf(0.0, alert_t - delta)
+	alert_scan -= delta
+	if alert_scan <= 0.0 and game != null and game.player != null:
+		alert_scan = 0.4
+		scan_alerts()
 	for k in pressed_flash.keys():
 		pressed_flash[k] -= delta
 		if pressed_flash[k] <= 0:
@@ -359,6 +368,27 @@ var text_q: Array = []
 
 ## Texts are queued and drawn together (all outlines, then all fills) so the
 ## renderer can batch them instead of breaking the batch for every label.
+## Warn the player when an allied tower is being hit or an allied hero is in trouble.
+func scan_alerts() -> void:
+	var pt: int = game.player.team
+	var now: float = game.game_time
+	for k in alert_cd.keys():
+		if now > alert_cd[k]:
+			alert_cd.erase(k)
+	for st in game.structures_of(pt):
+		if not st.dead and now - st.hurt_t < 1.0 and not alert_cd.has(st.get_instance_id()):
+			alert_cd[st.get_instance_id()] = now + 12.0
+			alert_msg = "Nossa base está sob ataque!" if st == game.bases[pt] else "Nossa torre está sob ataque!"
+			alert_t = 3.0
+			return
+	for hh in game.heroes:
+		if hh.team == pt and not hh.is_player and not hh.dead and now - hh.hurt_t < 1.0 and hh.hp_frac() < 0.4 and not alert_cd.has(hh.get_instance_id()):
+			alert_cd[hh.get_instance_id()] = now + 10.0
+			alert_msg = "%s está em perigo!" % hh.hero_name
+			alert_t = 3.0
+			return
+
+
 func text(pos: Vector2, s: String, size: int, c := Color.WHITE, align := HORIZONTAL_ALIGNMENT_LEFT, width := -1.0) -> void:
 	text_q.append([pos, s, size, c, align, width])
 
@@ -458,6 +488,31 @@ func _draw_ui() -> void:
 	text(Vector2(tc.x - 60, 42), "%02d:%02d" % [mins, secs], 24, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, 120)
 	text(Vector2(tc.x + 40, 48), str(game.team_kills[1]), 34, Color(1.0, 0.45, 0.4), HORIZONTAL_ALIGNMENT_RIGHT, 72)
 	text(Vector2(tc.x - 60, 60), "onda em %ds" % int(ceil(game.wave_timer)), 14, Color(1, 1, 1, 0.7), HORIZONTAL_ALIGNMENT_CENTER, 120)
+	# --- top bar: allies left of the score, enemies right (portrait + HP; red ring when hit, grey when dead/unseen)
+	var pt: int = p.team
+	var side := [[], []]
+	for hh in game.heroes:
+		side[0 if hh.team == pt else 1].append(hh)
+	for sd in 2:
+		for i in side[sd].size():
+			var hh = side[sd][i]
+			var cx: float = tc.x - 150 - i * 50 if sd == 0 else tc.x + 150 + i * 50
+			var cc := Vector2(cx, 30)
+			var seen: bool = sd == 0 or hh.vis[pt]
+			var hurt: bool = game.game_time - hh.hurt_t < 1.5 and not hh.dead
+			var ring: Color = Color(1, 0.15, 0.1) if hurt else (Color(0.45, 0.75, 1.0) if hh.team == 0 else Color(1.0, 0.45, 0.4))
+			hero_portrait(hh, cc, 18, ring)
+			if hh.dead or not seen:
+				ui.draw_circle(cc, 19, Color(0, 0, 0, 0.6))
+			if hh.dead:
+				ctext(cc + Vector2(0, 6), str(int(ceil(hh.respawn_timer))), 16, Color.WHITE)
+			elif seen:
+				var fr: float = hh.hp_frac()
+				ui.draw_rect(Rect2(cx - 20, 52, 40, 6), Color(0, 0, 0, 0.75))
+				ui.draw_rect(Rect2(cx - 20, 52, 40 * fr, 6), Color(0.3, 0.9, 0.3) if fr > 0.5 else (Color(1, 0.8, 0.2) if fr > 0.25 else Color(1, 0.2, 0.15)))
+	if alert_t > 0.0:
+		ui.draw_rect(Rect2(tc.x - 170, 70, 340, 30), Color(0.35, 0, 0, 0.6 * minf(1.0, alert_t)))
+		ctext(Vector2(tc.x, 92), alert_msg, 18, Color(1, 0.85, 0.8, minf(1.0, alert_t)))
 	var ai := 0
 	var ei := 0
 	for h in game.heroes:

@@ -13,6 +13,10 @@ var in_brush := -1
 var concealed := false
 var vis := [true, true]  # seen by team 0 / team 1 (fog of war)
 var reveal_t := 0.0
+var hurt_t := -99.0
+var gank = null
+var gank_until := 0.0
+var gank_cd := 30.0
 var kind := Kind.CREEP
 var max_hp := 100.0
 var hp := 100.0
@@ -447,6 +451,7 @@ func try_attack(t) -> bool:
 func take_damage(amount: float, src, pure := false) -> void:
 	if dead or invulnerable:
 		return
+	hurt_t = game.game_time
 	if src != null and is_instance_valid(src) and src.kind == Kind.HERO:
 		src.reveal_t = 1.5
 		src.concealed = false
@@ -586,8 +591,8 @@ func hero_tick(delta: float) -> void:
 				a.hp = min(a.max_hp, a.hp + a.max_hp * 0.04 * delta)
 	hp = min(max_hp, hp + regen * delta)
 	Items.tick(game, self, delta)
-	if p2().distance_to(game.fountain_pos(team)) < game.FOUNTAIN_R:
-		hp = min(max_hp, hp + max_hp * 0.12 * delta)
+	if p2().distance_to(game.fountain_pos(team)) < game.FOUNTAIN_HEAL_R:
+		hp = min(max_hp, hp + (max_hp * 0.16 + 25.0) * delta)
 	if ult_t >= 0:
 		ult_t -= delta
 		if ult_t < 0:
@@ -683,6 +688,31 @@ func bot_ai(delta: float) -> void:
 			if not nav_to(home, delta):
 				idle()
 			return
+	gank_cd -= delta
+	# --- defend our towers / base when they are under attack
+	if hp_frac() > 0.5:
+		var tw = game.tower_in_danger(team)
+		if tw != null:
+			var dt: float = dist_to(tw)
+			var mine: bool = tw.lane == lane or tw.kind == Kind.BASE
+			if dt > 9.0 and (dt < 40.0 or (mine and dt < 90.0)):
+				gank = null
+				jungle_camp = null
+				use_skills(foe)
+				if not nav_to(tw.p2(), delta):
+					idle()
+				return
+	# --- gank: walk to a weak, visible enemy hero away from its towers
+	if gank != null:
+		if not is_instance_valid(gank) or gank.dead or not gank.vis[team] or game.game_time > gank_until or hp_frac() < 0.5 or game.is_unsafe(self, gank.p2()):
+			gank = null
+		elif dist_to(gank) > atk_range + 3.0:
+			use_skills(gank)
+			if not nav_to(gank.p2(), delta):
+				idle()
+			return
+		else:
+			target = gank
 	use_skills(foe)
 	# --- don't stand under enemy towers without creeps
 	if game.is_unsafe(self, p2()):
@@ -716,6 +746,25 @@ func bot_ai(delta: float) -> void:
 
 ## Farm a nearby own-side jungle camp when the lane is quiet, or chase a weak enemy hero.
 func decide_roam() -> void:
+	if gank == null and gank_cd <= 0.0 and level >= 3 and hp_frac() > 0.75:
+		gank_cd = 12.0
+		var best_h = null
+		var best_d := 65.0
+		for h in game.heroes:
+			if h.team == team or h.dead or not h.vis[team] or h.hp_frac() > 0.7 or game.is_unsafe(self, h.p2()):
+				continue
+			var d: float = dist_to(h)
+			if d > 14.0 and d < best_d:
+				best_d = d
+				best_h = h
+		if best_h != null and randf() < 0.6:
+			gank_cd = 35.0
+			for a in game.heroes:
+				if a.team == team and a.is_bot and not a.dead and (a == self or (a.dist_to(self) < 25.0 and a.hp_frac() > 0.6)):
+					a.gank = best_h
+					a.gank_until = game.game_time + 22.0
+					a.jungle_camp = null
+			return
 	if jungle_camp != null or hp_frac() < 0.6:
 		return
 	if game.enemy_creeps_in_lane(team, lane) > 0 and p2().distance_to(game.lane_hold_point(team, lane)) < 25.0:

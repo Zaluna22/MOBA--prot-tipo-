@@ -15,6 +15,7 @@ const WARD_MAX := 4  # per team; the oldest goes away
 
 const MAP := 140.0
 const FOUNTAIN_R := 9.0
+const FOUNTAIN_HEAL_R := 14.0
 const WAVE_INTERVAL := 30.0
 const CAMP_RESPAWN := 60.0
 const LANE_W := 9.0
@@ -1059,6 +1060,17 @@ func structure_pick(s):
 			best = o
 			bd = d
 	return best if best != null else hero
+
+
+## A structure of this team that was hit in the last 3 s and is losing HP (bots go defend it).
+func tower_in_danger(team: int):
+	var best = null
+	for s in structures_of(team):
+		if s.dead or game_time - s.hurt_t > 3.0 or s.hp > s.max_hp * 0.95:
+			continue
+		if best == null or s.hp_frac() < best.hp_frac():
+			best = s
+	return best
 
 
 func structures_of(team: int) -> Array:
