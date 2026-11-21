@@ -1546,20 +1546,32 @@ func setup_fog() -> void:
 	var sh := Shader.new()
 	sh.code = """shader_type spatial;
 render_mode unshaded, cull_disabled, depth_draw_never, blend_mix;
-uniform sampler2D fog_now : filter_linear, repeat_disable;
-uniform sampler2D fog_old : filter_linear, repeat_disable;
-uniform float blend = 1.0;
+// Smooth fog: vision circles are evaluated per pixel every frame, so edges are round and move with the units.
+uniform vec4 src[96];
+uniform int n_src = 0;
+uniform float map_size = 140.0;
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vnoise(vec2 p) {
+	vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
 void fragment() {
-	float v0 = clamp(texture(fog_old, UV).r * 255.0, 0.0, 1.0);
-	float v1 = clamp(texture(fog_now, UV).r * 255.0, 0.0, 1.0);
-	float f = 1.0 - smoothstep(0.15, 0.85, mix(v0, v1, blend));
-	ALBEDO = vec3(0.02, 0.03, 0.07);
-	ALPHA = f * 0.62;
+	vec2 w = UV * map_size;
+	float t = TIME * 0.35;
+	float n = vnoise(w * 0.18 + vec2(t, t * 0.6)) * 0.6 + vnoise(w * 0.45 - vec2(t * 0.8, t)) * 0.4;
+	float vis = 0.0;
+	for (int i = 0; i < n_src; i++) {
+		vec4 s = src[i];
+		float d = distance(w, s.xy) + (n - 0.5) * 2.2;
+		vis = max(vis, s.w * (1.0 - smoothstep(s.z - 3.5, s.z + 0.5, d)));
+	}
+	float f = 1.0 - vis;
+	ALBEDO = mix(vec3(0.02, 0.03, 0.07), vec3(0.07, 0.09, 0.14), n * f);
+	ALPHA = f * (0.55 + 0.1 * n);
 }"""
 	var mat := ShaderMaterial.new()
 	mat.shader = sh
-	mat.set_shader_parameter("fog_now", fog_cur)
-	mat.set_shader_parameter("fog_old", fog_prev)
+	mat.set_shader_parameter("map_size", float(MAP))
 	fog_mat = mat
 	mi.material_override = mat
 	add_child(mi)
@@ -1601,10 +1613,45 @@ func team_sees(t: int, p: Vector2) -> bool:
 	return fog_off or fog_grid[t][fog_cell(p)] == 1
 
 
+var fog_src_a := {}  # source key -> fade 0..1, so vision opens/closes smoothly when units appear or die
+
+
+func fog_upload(delta: float) -> void:
+	if fog_mat == null or player == null:
+		return
+	var pt: int = player.team
+	var arr := PackedVector4Array()
+	var seen := {}
+	var add := func(key, p: Vector2, r: float, alive: bool) -> void:
+		var a: float = fog_src_a.get(key, 0.0)
+		a = move_toward(a, 1.0 if alive else 0.0, delta / 0.35)
+		if a <= 0.0:
+			fog_src_a.erase(key)
+			return
+		fog_src_a[key] = a
+		seen[key] = true
+		if arr.size() < 96:
+			arr.append(Vector4(p.x, p.y, r, a))
+	add.call("fountain", FOUNTAIN_POS[pt], FOUNTAIN_VISION, true)
+	for o in units:
+		if o.team != pt:
+			continue
+		add.call(o.get_instance_id(), o.p2(), VISION.get(o.kind, 8.0), not o.dead)
+	for i in wards.size():
+		var w = wards[i]
+		if w["team"] == pt:
+			add.call("w%d_%d" % [int(w["pos"].x * 10), int(w["pos"].y * 10)], w["pos"], WARD_VISION, true)
+	for k in fog_src_a.keys():
+		if not seen.has(k):
+			fog_src_a[k] = fog_src_a[k] - delta / 0.35
+			if fog_src_a[k] <= 0.0:
+				fog_src_a.erase(k)
+	fog_mat.set_shader_parameter("src", arr)
+	fog_mat.set_shader_parameter("n_src", arr.size())
+
+
 func update_fog(delta: float) -> void:
-	if fog_mat != null and fog_blend < 1.0:
-		fog_blend = minf(1.0, fog_blend + delta / 0.15)
-		fog_mat.set_shader_parameter("blend", fog_blend)
+	fog_upload(delta)
 	fog_t -= delta
 	if fog_t > 0:
 		return
@@ -1636,10 +1683,6 @@ func update_fog(delta: float) -> void:
 	if fog_off:
 		return
 	var g: PackedByteArray = fog_grid[pt]
-	fog_prev.update(Image.create_from_data(FOG_RES, FOG_RES, false, Image.FORMAT_L8, fog_last))
-	fog_cur.update(Image.create_from_data(FOG_RES, FOG_RES, false, Image.FORMAT_L8, g))
-	fog_last = g.duplicate()
-	fog_blend = 0.0
 	fog_mm_t -= 0.15
 	if fog_mm_t <= 0.0:
 		fog_mm_t = 0.5
