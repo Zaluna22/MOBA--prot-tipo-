@@ -221,10 +221,109 @@ func build(dire: bool) -> Node3D:
 	return root
 
 
+## Dire: craggy slate pillar with a spine of vertebrae, a flared collar of black rock shards
+## with a red glowing V-band and slit eyes, and a hooded head with a long crossbar on top.
+func build_dire() -> Node3D:
+	rng.seed = 11
+	var slate_lo := Color(0.42, 0.47, 0.53)
+	var slate_hi := Color(0.17, 0.18, 0.21)
+	var black := Color(0.11, 0.12, 0.14)
+	var glow := Color(1.0, 0.22, 0.06)
+	var zs := 0.85
+	var s_stone := SurfaceTool.new(); s_stone.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var s_glow := SurfaceTool.new(); s_glow.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var s_dark := SurfaceTool.new(); s_dark.begin(Mesh.PRIMITIVE_TRIANGLES)
+
+	# pedestal of broken slabs + faint red ring
+	prim(s_stone, cyl(1.70, 1.92, 0.32, 7), xf(Vector3(0, 0.16, 0), Vector3(0, 9, 0)), slate_lo * 0.7)
+	prim(s_glow, cyl(1.62, 1.62, 0.04, 7), xf(Vector3(0, 0.33, 0), Vector3(0, 9, 0)), glow * 0.7)
+
+	# craggy pillar: faceted lathe, wide at the foot, slimmer waist, swelling into the collar
+	var prof := [Vector2(1.45, 0.30), Vector2(1.38, 0.90), Vector2(1.18, 1.70), Vector2(1.05, 2.60),
+		Vector2(0.98, 3.40), Vector2(1.05, 4.00), Vector2(1.20, 4.50), Vector2(1.00, 5.00),
+		Vector2(0.70, 5.40), Vector2(0.0, 5.55)]
+	lathe(s_stone, prof, 9, zs, slate_lo, slate_hi, 0.16)
+	# rock slabs leaning on the foot
+	for i in 7:
+		var a := TAU * i / 7.0 + rng.randf_range(-0.2, 0.2)
+		var h := rng.randf_range(1.3, 2.6)
+		var p := Vector3(sin(a) * 1.25, h * 0.45, cos(a) * 1.25 * zs)
+		prim(s_stone, box(rng.randf_range(0.6, 0.9), h, rng.randf_range(0.45, 0.7)),
+			xf(p, Vector3(rng.randf_range(-10, 10), rad_to_deg(a), rng.randf_range(-14, 14))), slate_lo * rng.randf_range(0.85, 1.05))
+	# spine of vertebrae down the front
+	for k in 6:
+		var y := 1.55 + k * 0.52
+		var w := 0.62 - k * 0.04
+		var zf := 1.0 * zs + 0.12 - k * 0.01
+		prim(s_stone, box(w, w * 0.45, 0.42), xf(Vector3(0, y, zf), Vector3(0, 0, 0), Vector3(1, 1, 1)), slate_hi * 1.25)
+		prim(s_stone, cyl(0.0, w * 0.32, 0.38, 4), xf(Vector3(0, y - w * 0.32, zf + 0.12), Vector3(180, 45, 0)), slate_hi * 1.1)
+
+	# flared collar of black rock shards
+	for i in 22:
+		var a := TAU * i / 22.0 + rng.randf_range(-0.08, 0.08)
+		var front := cos(a)
+		var len := rng.randf_range(1.2, 2.0) + 0.3 * absf(sin(a))
+		var tilt := rng.randf_range(48.0, 72.0)
+		var y0 := 4.55 + rng.randf_range(-0.25, 0.35)
+		var b := Basis.from_euler(Vector3(0, a, 0)) * Basis.from_euler(Vector3(deg_to_rad(tilt), 0, 0))
+		var base := Vector3(sin(a) * 0.85, y0, cos(a) * 0.85 * zs)
+		var center := base + b * Vector3(0, len * 0.5, 0)
+		var th := rng.randf_range(0.28, 0.42)
+		prim(s_dark, cyl(0.0, th, len, 4), Transform3D(b, center), black * rng.randf_range(0.85, 1.25))
+		if front < -0.3:
+			prim(s_dark, cyl(0.0, th * 0.7, len * 0.8, 4), Transform3D(b * Basis.from_euler(Vector3(-0.5, 0, 0)), center + Vector3(0, 0.5, 0)), black)
+	# collar ring (the chest under the shards)
+	prim(s_dark, cyl(1.25, 1.05, 0.9, 9), xf(Vector3(0, 4.55, 0), Vector3.ZERO, Vector3(1, 1, zs)), black * 1.2)
+
+	# demonic face plate on the front with the red V-band and slit eyes
+	var zf2 := 1.18
+	prim(s_dark, box(1.5, 1.05, 0.30), xf(Vector3(0, 4.55, zf2), Vector3(-8, 0, 0)), black * 1.15)
+	for sgn in [-1.0, 1.0]:
+		prim(s_glow, box(1.15, 0.17, 0.06), xf(Vector3(0.55 * sgn, 4.92, zf2 + 0.17), Vector3(-8, 0, -14 * sgn)), glow)
+		prim(s_glow, box(0.34, 0.08, 0.06), xf(Vector3(0.30 * sgn, 4.47, zf2 + 0.17), Vector3(-8, 0, 22 * sgn)), glow)
+		prim(s_dark, cyl(0.0, 0.16, 0.7, 4), xf(Vector3(0.62 * sgn, 4.20, zf2 + 0.05), Vector3(180, 0, -20 * sgn)), black)
+	prim(s_glow, box(0.30, 0.07, 0.06), xf(Vector3(0, 4.22, zf2 + 0.15), Vector3(-8, 0, 0)), glow * 0.85)
+	prim(s_dark, cyl(0.0, 0.22, 0.9, 4), xf(Vector3(0, 3.85, zf2 - 0.05), Vector3(180, 45, 0)), black)
+
+	# hooded head with a long crossbar and a pointed chin
+	prim(s_dark, cyl(0.20, 0.62, 1.05, 6), xf(Vector3(0, 5.95, 0.15)), black * 1.3)
+	prim(s_dark, cyl(0.0, 0.45, 0.9, 6), xf(Vector3(0, 5.25, 0.35), Vector3(200, 0, 0)), black * 1.2)
+	prim(s_dark, box(0.85, 0.42, 0.55), xf(Vector3(0, 6.62, 0.12)), black * 1.4)
+	for sgn in [-1.0, 1.0]:
+		prim(s_dark, box(1.45, 0.24, 0.32), xf(Vector3(1.05 * sgn, 6.68, 0.1), Vector3(0, 0, -7 * sgn)), black * 1.35)
+		prim(s_dark, cyl(0.0, 0.17, 0.42, 4), xf(Vector3(1.85 * sgn, 6.55, 0.1), Vector3(0, 0, 90 * sgn + 15 * sgn)), black * 1.3)
+		prim(s_glow, box(0.16, 0.05, 0.05), xf(Vector3(0.15 * sgn, 6.05, 0.73), Vector3(0, 0, -12 * sgn)), glow)
+	prim(s_dark, cyl(0.0, 0.18, 0.55, 4), xf(Vector3(0, 7.05, 0.12), Vector3(0, 45, 0)), black * 1.4)
+
+	var mesh := ArrayMesh.new()
+	var m_stone := StandardMaterial3D.new()
+	m_stone.vertex_color_use_as_albedo = true
+	m_stone.roughness = 0.9
+	var m_glow := StandardMaterial3D.new()
+	m_glow.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m_glow.vertex_color_use_as_albedo = true
+	m_glow.albedo_color = Color(1.6, 1.6, 1.6)
+	var m_dark := StandardMaterial3D.new()
+	m_dark.vertex_color_use_as_albedo = true
+	m_dark.metallic = 0.25
+	m_dark.roughness = 0.55
+	finish(s_stone, m_stone, mesh)
+	finish(s_glow, m_glow, mesh)
+	finish(s_dark, m_dark, mesh)
+	var root := Node3D.new()
+	root.name = "TowerDire"
+	var mi := MeshInstance3D.new()
+	mi.name = "Tower"
+	mi.mesh = mesh
+	root.add_child(mi)
+	mi.owner = root
+	return root
+
+
 func _init() -> void:
 	DirAccess.make_dir_recursive_absolute("res://assets/towers")
 	for dire in [false, true]:
-		var root := build(dire)
+		var root := build_dire() if dire else build(false)
 		var ps := PackedScene.new()
 		ps.pack(root)
 		var path := "res://assets/towers/tower_%s.scn" % ("dire" if dire else "radiant")
