@@ -70,3 +70,6 @@ Atributos: 740 de vida, 50 de dano, alcance 1,4, ataque a cada 0,9s, velocidade 
 | 4 | MISERICÓRDIA (Golpe de Misericórdia) | passiva, Nv 3 | 15% de chance de crítico ×2,5 (+0,1 por nível acima do 3) nos ataques básicos e na parte de ataque da Adaga; número vermelho grande. Não vale contra torres/base. No HUD o 4º botão aparece como "PASSIVA" (sem recarga; tocar mostra a chance e o multiplicador). |
 
 Bots: arremessam a Adaga para cutucar/finalizar e dar o último golpe em creeps, usam o Golpe Fantasma em heróis que conseguem vencer, usam o Borrão para chegar escondidos em heróis fracos ou para fugir (com Adaga no perseguidor e Golpe Fantasma em aliado mais perto da base). Rota de itens: Poção, Botas, Luvas, Espada, Satânico, BKB.
+
+## Assinatura do APK
+A partir da v0.7.0 o APK é assinado com a chave de debug em `tools/android/debug.keystore` (alias `androiddebugkey`, senha `android`). Para que as próximas versões instalem por cima, copie esse arquivo para `~/.local/share/godot/keystores/debug.keystore` (ou aponte Editor Settings > Export > Android > Debug Keystore para ele) antes de exportar.
