@@ -6,6 +6,7 @@ extends Node3D
 const Unit := preload("res://scripts/unit3d.gd")
 const FxScript := preload("res://scripts/fx3d.gd")
 const HudScript := preload("res://scripts/hud.gd")
+const START_GOLD := 600.0  # every hero starts with enough for Botas + Poções
 const ArtScript := preload("res://scripts/world_art.gd")
 const Items := preload("res://scripts/items.gd")
 const WARD_R := 8.0
@@ -132,6 +133,7 @@ func _ready() -> void:
 		h.lane = ROSTER[i][1]
 		h.hero_name = cfgs[key]["name"]
 		h.set_kit(roster[i][0])
+		h.gold = START_GOLD
 		h.is_bot = i != 0 or (autotest and not ("--afk" in args))
 		heroes.append(h)
 	player = heroes[0]

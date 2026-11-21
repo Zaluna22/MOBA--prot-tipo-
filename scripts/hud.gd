@@ -29,6 +29,8 @@ var aim_skill := -1
 var aim_vec := Vector2.ZERO
 const AIM_DEAD := 26.0
 var shop_open := false
+var shop_msg := ""
+var shop_msg_t := 0.0
 var sell_mode := false
 const SHOP_COLS := 4
 
@@ -280,8 +282,14 @@ func shop_press(p: Vector2) -> bool:
 			return true
 	for i in Items.ORDER.size():
 		if shop_tile(i).has_point(p):
+			var why: String = Items.buy_block(game, pl, Items.ORDER[i])
 			if Items.buy(game, pl, Items.ORDER[i]):
 				pressed_flash["shop%d" % i] = 0.15
+				shop_msg = "Comprou %s!" % Items.ITEMS[Items.ORDER[i]]["name"]
+			else:
+				shop_msg = {"ouro": "Ouro insuficiente", "volte à base": "Volte à base (fonte) para comprar", "já tem": "Você já tem esse item",
+					"máx": "Máximo atingido", "cheio": "Inventário cheio: venda um item", "morto": "Espere renascer"}.get(why, why)
+			shop_msg_t = 2.0
 			return true
 	return true
 
@@ -338,6 +346,7 @@ func show_end(won: bool) -> void:
 func _process(delta: float) -> void:
 	if not get_tree().paused:
 		help_time -= delta
+	shop_msg_t = maxf(0.0, shop_msg_t - delta)
 	for k in pressed_flash.keys():
 		pressed_flash[k] -= delta
 		if pressed_flash[k] <= 0:
@@ -719,7 +728,9 @@ func draw_shop(p) -> void:
 	text(r.position + Vector2(20, 40), "LOJA", 30, Color(1, 0.88, 0.45))
 	ui.draw_circle(r.position + Vector2(130, 30), 9, Color(1.0, 0.8, 0.2))
 	text(r.position + Vector2(146, 40), "%d" % int(p.gold), 24, Color(1.0, 0.88, 0.35))
-	if not at_shop:
+	if shop_msg_t > 0.0:
+		text(r.position + Vector2(220, 38), shop_msg, 18, Color(0.6, 1, 0.6) if shop_msg.begins_with("Comprou") else Color(1, 0.55, 0.5))
+	elif not at_shop:
 		text(r.position + Vector2(220, 38), "Volte à base para comprar", 18, Color(1, 0.55, 0.5))
 	for i in Items.ORDER.size():
 		var id: String = Items.ORDER[i]
