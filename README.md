@@ -6,6 +6,8 @@ Protótipo de MOBA "tipo Dota" para celular, feito em **Godot 4.7** (GDScript, r
 
 **Etapa 1 (2D, em `prototipo_2d/`):** 1 lane contra bot — herói controlado por toque/mouse, ataque automático, habilidade ONDA (dano em área), upgrade +FORÇA com ouro, ondas de creeps a cada 30s, 2 torres + base por lado (torres protegidas por camada), herói bot inimigo, níveis/XP, ouro, renascimento, tela de vitória/derrota.
 
+**v0.7.0:** nova heroína Assassina Fantasma (ver seção abaixo).
+
 Próximas etapas: mapa completo (3 lanes + selva), mais heróis/habilidades, depois online.
 
 ## Controles
@@ -54,3 +56,17 @@ Torres e bases inimigas continuam visíveis. O mato alto continua escondendo her
 
 ## Torres estilo Dota (v0.6.1)
 Torres novas geradas por `tools/build_towers.gd`: Radiant (pedra branca, brilho azul, máscaras douradas e coroa) e Dire (basalto escuro, brilho vermelho, chifres de osso). Para mudar o visual, edite o script e rode `godot --headless -s res://tools/build_towers.gd`.
+
+## Assassina Fantasma (v0.7.0)
+Nova heroína corpo a corpo, inspirada na Phantom Assassin (Mortred) do Dota 2: frágil, rápida e letal. Modelo: KayKit Rogue (CC0) com duas adagas e textura recolorida em aço escuro/preto com detalhes azul-petróleo (`assets/chars/Rogue_assassina_texture.png`). No 3v3 padrão ela é o bot do meio do time vermelho (o Orc continua disponível na tela de escolha).
+
+Atributos: 740 de vida, 50 de dano, alcance 1,4, ataque a cada 0,9s, velocidade 6,3.
+
+| # | Habilidade | Recarga | Efeito |
+|---|---|---|---|
+| 1 | ADAGA | 7s | Arremessa uma adaga num inimigo (até 8m; arraste para mirar, toque mira o mais perto): 60 + 15×nível + 50% do dano de ataque (físico) e lentidão de 2,5s. Pode dar crítico (Misericórdia). |
+| 2 | GOLPE FANTASMA | 10s | Teleporta para junto de uma unidade a até 7m. Toque: inimigo. Arrastar: inimigo ou aliado (fuga). Num inimigo: +80% de velocidade de ataque por 3s. |
+| 3 | BORRÃO | 18s | Fica invisível para o time inimigo por 6s + 0,25s/nível: some da tela e do minimapa e não pode ser alvo (habilidades em área ainda acertam). É revelada perto de heróis inimigos (6,5m) ou dentro do alcance de torres/base inimigas. **Passiva Imaterial:** 18% + 1%/nível (máx. 30%) de chance de esquivar ataques básicos ("ESQUIVA"). |
+| 4 | MISERICÓRDIA (Golpe de Misericórdia) | passiva, Nv 3 | 15% de chance de crítico ×2,5 (+0,1 por nível acima do 3) nos ataques básicos e na parte de ataque da Adaga; número vermelho grande. Não vale contra torres/base. No HUD o 4º botão aparece como "PASSIVA" (sem recarga; tocar mostra a chance e o multiplicador). |
+
+Bots: arremessam a Adaga para cutucar/finalizar e dar o último golpe em creeps, usam o Golpe Fantasma em heróis que conseguem vencer, usam o Borrão para chegar escondidos em heróis fracos ou para fugir (com Adaga no perseguidor e Golpe Fantasma em aliado mais perto da base). Rota de itens: Poção, Botas, Luvas, Espada, Satânico, BKB.

@@ -170,7 +170,8 @@ func add_fire(p: Vector3, size: float, dur := 0.6) -> void:
 	_item({"type": "fire", "node": mi, "s": size, "dur": dur})
 
 
-func add_projectile(from: Vector3, target, src, dmg: float, c: Color, speed := 14.0, size := 0.32) -> void:
+## on_hit (optional): called with the target instead of a plain take_damage (attacks: dodge/crit; skills: extra effects).
+func add_projectile(from: Vector3, target, src, dmg: float, c: Color, speed := 14.0, size := 0.32, on_hit := Callable()) -> void:
 	var mi := _spawn("quad", 1, c)
 	mi.position = from
 	mi.scale = Vector3.ONE * size * 1.6
@@ -180,11 +181,11 @@ func add_projectile(from: Vector3, target, src, dmg: float, c: Color, speed := 1
 		tail.position = from
 		tail.scale = Vector3.ONE * size * 1.1
 		(tail.material_override as ShaderMaterial).set_shader_parameter("alpha", 0.45)
-	items.append({"type": "proj", "node": mi, "tail": tail, "target": target, "src": src, "dmg": dmg, "speed": speed, "c": c, "t": 0.0, "dur": 5.0, "size": size})
+	items.append({"type": "proj", "node": mi, "tail": tail, "target": target, "src": src, "dmg": dmg, "speed": speed, "c": c, "t": 0.0, "dur": 5.0, "size": size, "hit": on_hit})
 
 
-func add_text(p: Vector3, text: String, c: Color) -> void:
-	game.hud_texts.append({"p": p, "text": text, "c": c, "t": 0.0, "dur": 1.2})
+func add_text(p: Vector3, text: String, c: Color, size := 22) -> void:
+	game.hud_texts.append({"p": p, "text": text, "c": c, "t": 0.0, "dur": 1.2, "size": size})
 
 
 func _release(node: MeshInstance3D) -> void:
@@ -251,7 +252,11 @@ func _process(delta: float) -> void:
 					if d.length() <= step + 0.2:
 						done = true
 						add_spark(aim, it["c"], 0.7 if it["size"] < 0.4 else 1.1)
-						tgt.take_damage(it["dmg"], it["src"] if is_instance_valid(it["src"]) else null)
+						var hit: Callable = it["hit"]
+						if hit.is_valid():
+							hit.call(tgt)
+						else:
+							tgt.take_damage(it["dmg"], it["src"] if is_instance_valid(it["src"]) else null)
 					else:
 						node.position += d.normalized() * step
 		if done:

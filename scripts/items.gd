@@ -36,6 +36,8 @@ const ORDER := ["botas", "pocao", "tp", "sentinela", "espada", "coracao", "luvas
 const ROUTE_RANGED := ["pocao", "botas", "espada", "luvas", "cetro", "satanico"]
 const ROUTE_MELEE := ["pocao", "botas", "coracao", "espada", "bkb", "blink"]
 const RANGED_KITS := ["elfo", "elfa", "orca"]
+## Assassina: attack speed + damage carry (lifesteal fits the crits), BKB late.
+const ROUTE_CARRY := ["pocao", "botas", "luvas", "espada", "satanico", "bkb"]
 
 
 static func near_shop(game, h) -> bool:
@@ -201,7 +203,7 @@ static func use(game, h, slot: int) -> bool:
 static func bot_think(game, h, foe) -> void:
 	var at_home := near_shop(game, h)
 	if at_home or randf() < 0.02:
-		var route: Array = ROUTE_RANGED if h.kit in RANGED_KITS else ROUTE_MELEE
+		var route: Array = ROUTE_CARRY if h.kit == "assassina" else (ROUTE_RANGED if h.kit in RANGED_KITS else ROUTE_MELEE)
 		for id in route:
 			if id == "pocao":
 				if slot_of(h, "pocao") < 0 and h.gold >= 60:

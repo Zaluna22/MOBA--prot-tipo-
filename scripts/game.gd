@@ -24,7 +24,8 @@ const FOUNTAIN_POS := [Vector2(7, 133), Vector2(133, 7)]
 const LANE_NAMES := ["TOPO", "MEIO", "BAIXO"]
 const CAMP_POS := [Vector2(33, 70), Vector2(70, 107), Vector2(70, 33), Vector2(107, 70)]
 ## [config key, lane] - first three are blue (index 0 = player), last three red
-const ROSTER := [["elfo", 1], ["elfa", 2], ["cavaleiro", 0], ["orc", 1], ["orca", 0], ["acougueiro", 2]]
+## v0.7.0: the red mid bot is the Assassina Fantasma (Orc stays pickable in the hero screen).
+const ROSTER := [["elfo", 1], ["elfa", 2], ["cavaleiro", 0], ["assassina", 1], ["orca", 0], ["acougueiro", 2]]
 
 var lanes: Array = []
 var lane_cum: Array = []
@@ -222,6 +223,15 @@ func load_configs() -> void:
 	cfgs["hero_acougueiro"] = {"name": "Açougueiro", "merge": true, "scene": load("res://assets/tripo/acougueiro.glb"), "scale": 1.45,
 		"lib": ual, "anims": butcher_anims,
 		"stats": {"hp": 950, "dmg": 58, "range": 1.5, "cd": 1.1, "speed": 5.8}}
+	# Assassina Fantasma (v0.7.0): KayKit Rogue (CC0) with its own KayKit animations, two knives kept,
+	# recoloured atlas (dark steel / black + dark teal accents) generated from Rogue_rogue_texture.png.
+	var assassin_anims := {"idle": "2H_Melee_Idle", "run": "Running_A", "attack": "Dualwield_Melee_Attack_Stab", "death": "Death_A",
+		"spin": "Dualwield_Melee_Attack_Slice", "dash": "Dodge_Forward", "cheer": "Spellcast_Raise", "ult": "Dualwield_Melee_Attack_Chop",
+		"crit": "Dualwield_Melee_Attack_Chop", "throw": "Throw"}
+	cfgs["hero_assassina"] = {"name": "Assassina Fantasma", "merge": true, "scene": load("res://assets/chars/Rogue.glb"), "scale": 1.0,
+		"hide": ["1H_Crossbow", "2H_Crossbow", "Throwable"], "tex": load("res://assets/chars/Rogue_assassina_texture.png"),
+		"anims": assassin_anims,
+		"stats": {"hp": 740, "dmg": 50, "range": 1.4, "cd": 0.9, "speed": 6.3}}
 	cfgs["creep0"] = {"merge": true, "scene": load("res://assets/chars/Knight.glb"), "scale": 0.66,
 		"hide": ["1H_Sword_Offhand", "Badge_Shield", "Rectangle_Shield", "Spike_Shield", "2H_Sword"],
 		"anims": {"idle": "Idle", "run": "Running_A", "attack": "1H_Melee_Attack_Chop", "death": "Death_A"}}
@@ -707,7 +717,7 @@ func update_brushes(delta: float) -> void:
 	for h in heroes:
 		var b := -1 if h.dead else brush_of(h.p2())
 		h.in_brush = b
-		h.concealed = b >= 0 and h.reveal_t <= 0.0 and not occ.has(b * 3 + (1 - h.team))
+		h.concealed = (b >= 0 and h.reveal_t <= 0.0 and not occ.has(b * 3 + (1 - h.team))) or h.blur_hidden()
 
 
 func scatter_props() -> void:
@@ -797,6 +807,8 @@ func _physics_process(delta: float) -> void:
 		for h in heroes:
 			print("   %s lane=%d pos=%s hp=%d dead=%s ret=%s tgt=%s camp=%s" % [h.hero_name, h.lane, str(h.p2().round()), h.hp, h.dead, h.retreating, (h.target.name if h.target != null and is_instance_valid(h.target) else "-"), h.jungle_camp != null])
 			print("     gold=%d items=%s" % [h.gold, str(h.items.map(func(e): return "-" if e == null else "%s%s" % [e["id"], ("x%d" % e["n"]) if e["n"] > 1 else ""]))])
+			if h.kit == "assassina":
+				print("     assassina k/d=%d/%d %s" % [h.kills, h.deaths, str(h.as_stats)])
 		var cc := [[0, 0, 0], [0, 0, 0]]
 		for o in units:
 			if o.lane >= 0 and o.team < 2 and (o.kind == Unit.Kind.CREEP or o.kind == Unit.Kind.RANGED):
@@ -1500,6 +1512,22 @@ func merge_skinned(model: Node3D, cfg: Dictionary) -> void:
 	for i in range(1, parts.size()):
 		parts[i].get_parent().remove_child(parts[i])
 		parts[i].free()
+
+
+## cfg "tex": swap the albedo texture on every surface (one shared material per texture, so it batches).
+func retexture(model: Node3D, tex: Texture2D) -> void:
+	var key := "tex:" + tex.resource_path
+	for mi in model.find_children("*", "MeshInstance3D", true, false):
+		for si in mi.mesh.get_surface_count():
+			var m: Material = mi.get_active_material(si)
+			if not (m is BaseMaterial3D):
+				continue
+			var k2 := key + str(m.get_instance_id())
+			if not merged_cache.has(k2):
+				var nm: BaseMaterial3D = m.duplicate()
+				nm.albedo_texture = tex
+				merged_cache[k2] = nm
+			mi.set_surface_override_material(si, merged_cache[k2])
 
 
 # ---------------------------------------------------------------- fog of war

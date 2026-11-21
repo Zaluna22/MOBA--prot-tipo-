@@ -108,12 +108,15 @@ const KITS := {
 	"orca": {"names": ["RAIO", "ESPÍRITO", "CURA", "TEMPESTADE"], "cd": [6.0, 8.0, 16.0, 45.0], "col": Color(0.6, 0.55, 1.0)},
 	"barbaro": {"names": ["REDEMOINHO", "SALTO", "FÚRIA", "MACHADO"], "cd": [6.0, 9.0, 15.0, 42.0], "col": Color(1.0, 0.65, 0.2)},
 	"acougueiro": {"names": ["GANCHO", "PODRIDÃO", "ESCUDO DE CARNE", "DESMEMBRAR"], "cd": [13.0, 1.0, 14.0, 40.0], "col": Color(0.9, 0.3, 0.28)},
+	# slot 4 (MISERICÓRDIA = Golpe de Misericórdia) is a passive: cd 0, never cast
+	"assassina": {"names": ["ADAGA", "GOLPE FANTASMA", "BORRÃO", "MISERICÓRDIA"], "cd": [7.0, 10.0, 18.0, 0.0], "col": Color(0.55, 0.75, 0.85)},
 }
 ## Skills that use drag-to-aim on the button (others cast on press).
 const AIMED := {
 	"elfo": [false, true, false, true], "elfa": [true, true, false, true], "cavaleiro": [false, true, false, false],
 	"orc": [false, true, false, true], "orca": [false, true, false, true], "barbaro": [false, true, false, true],
 	"acougueiro": [true, false, false, true],
+	"assassina": [true, true, false, false],
 }
 const HOOK_RANGE := 11.0
 const HOOK_SPEED := 30.0
@@ -136,8 +139,30 @@ var rot_fx_t := 0.0
 var flesh := 0  # Pilha de Carne stacks
 const ROT_R := 3.2
 
+# Assassina Fantasma: dagger, phantom strike, blur (+ evasion passive), critical passive
+const DAGGER_RANGE := 8.0
+const DAGGER_SLOW := 2.5
+const STRIKE_RANGE := 7.0
+const STRIKE_AS := 0.8  # +80% attack speed for STRIKE_TIME after striking an enemy
+const STRIKE_TIME := 3.0
+const BLUR_TIME := 6.0
+const BLUR_REVEAL := 6.5  # enemy heroes this close (or enemy towers in range) see through Blur
+const CRIT_LEVEL := 3
+const CRIT_CHANCE := 0.15
+const CRIT_COL := Color(1.0, 0.22, 0.3)
+const DODGE_COL := Color(0.7, 0.92, 1.0)
+var strike_t := 0.0
+var blur_t := 0.0
+var aim_explicit := false  # skill was dragged to aim (allies only count for Golpe Fantasma when aimed)
+var next_crit := false
+var ghost_on := false
+var ghost_meshes: Array = []
+var as_stats := {}  # autotest counters (dagger, strike, blur, crit, dodge)
+
 
 func skill_range(i: int) -> float:
+	if kit == "assassina":
+		return [DAGGER_RANGE, STRIKE_RANGE, 0.0, 0.0][i]
 	if kit == "acougueiro":
 		return [HOOK_RANGE, 0.0, 0.0, 3.5][i]
 	if i == 1:
@@ -157,6 +182,11 @@ func set_kit(k: String) -> void:
 
 func skill_names() -> Array:
 	return KITS[kit]["names"]
+
+
+## Slot that is a passive (shown in the HUD, never cast).
+func skill_passive(i: int) -> bool:
+	return kit == "assassina" and i == 3
 
 
 func kit_color() -> Color:
@@ -240,6 +270,8 @@ func build_visual(cfg: Dictionary) -> void:
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if shadows else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	if cfg.get("merge", false):
 		game.merge_skinned(model, cfg)
+	if cfg.has("tex"):
+		game.retexture(model, cfg["tex"])
 	if cfg.has("lib"):
 		var ap := AnimationPlayer.new()
 		ap.name = "AnimationPlayer"
@@ -340,6 +372,8 @@ func atk_speed_mult() -> float:
 		m *= 1.35
 	if range_t > 0:
 		m *= 1.3
+	if strike_t > 0:
+		m *= 1.0 + STRIKE_AS
 	return m * (1.0 + item_as)
 
 
@@ -390,7 +424,7 @@ func _physics_process(delta: float) -> void:
 			var t = pending_hit
 			pending_hit = null
 			if is_valid_target(t) and dist_to(t) <= atk_range + radius + t.radius + 1.0:
-				t.take_damage(dmg, self)
+				land_attack(t)
 				game.fx.add_spark(t.position + Vector3(0, t.hit_height, 0), team_color().lightened(0.4), 0.35)
 	slow_t -= delta
 	if stun_t > 0:
@@ -438,11 +472,12 @@ func try_attack(t) -> bool:
 			var spd := 22.0 if (kind == Kind.TOWER or kind == Kind.BASE) else 16.0
 			if kind == Kind.HERO:
 				c = Color(0.6, 0.85, 1.0)
-			game.fx.add_projectile(from, t, self, dmg, c, spd, sz)
+			game.fx.add_projectile(from, t, self, dmg, c, spd, sz, land_attack)
 		else:
 			pending_hit = t
 			pending_t = 0.25 / atk_speed_mult()
-		play("attack", atk_speed_mult() * max(1.0, 1.0 / atk_cd), true)
+		next_crit = crit_roll(t)
+		play("crit" if next_crit and anims.has("crit") else "attack", atk_speed_mult() * max(1.0, 1.0 / atk_cd), true)
 	elif atk_timer < atk_cd * 0.4 and (cur_anim == anims.get("run", "")):
 		play("idle")
 	return true
@@ -454,7 +489,8 @@ func take_damage(amount: float, src, pure := false) -> void:
 	hurt_t = game.game_time
 	if src != null and is_instance_valid(src) and src.kind == Kind.HERO:
 		src.reveal_t = 1.5
-		src.concealed = false
+		if src.blur_t <= 0:
+			src.concealed = false
 	if (kind == Kind.TOWER or kind == Kind.BASE) and src != null and is_instance_valid(src) and src.kind == Kind.HERO:
 		amount *= 0.6
 	if armor_t > 0 and not pure:
@@ -580,6 +616,12 @@ func hero_tick(delta: float) -> void:
 	buff_t -= delta
 	armor_t -= delta
 	ls_t -= delta
+	if strike_t > 0:
+		strike_t -= delta
+	if blur_t > 0:
+		blur_t -= delta
+	if ghost_on != (blur_t > 0):
+		set_ghost(blur_t > 0)
 	if range_t > 0:
 		range_t -= delta
 		atk_range = base_range + 2.5 if range_t > 0 else base_range
@@ -680,7 +722,9 @@ func bot_ai(delta: float) -> void:
 		if hp_frac() >= 0.92:
 			retreating = false
 		else:
-			if foe != null and dist_to(foe) < 5.0 and cds[1] <= 0 and kit != "acougueiro":
+			if kit == "assassina":
+				assassin_escape(foe, home)
+			elif foe != null and dist_to(foe) < 5.0 and cds[1] <= 0 and kit != "acougueiro":
 				facing = (home - p2()).normalized()
 				cast(1)
 			elif foe != null and dist_to(foe) < 3.4 and cds[0] <= 0 and kit != "acougueiro":
@@ -785,6 +829,8 @@ func use_skills(foe) -> void:
 		return
 	if kit == "acougueiro" and butcher_skills(foe):
 		return
+	if kit == "assassina" and assassin_skills(foe):
+		return
 	var near: Array = game.enemies_near(p2(), team, 3.6)
 	var lane_near := 0
 	for e in near:
@@ -856,9 +902,13 @@ func cast(i: int) -> bool:
 		return false
 	if i == 3 and level < 3:
 		return false
+	if skill_passive(i):
+		aim_override = Vector2.ZERO
+		return false
 	cds[i] = cd_max[i] * (1.0 - item_cdr)
 	var c := kit_color()
 	var lv := float(level)
+	aim_explicit = aim_override.length() > 0.01
 	var aim := _aim_dir()
 	match i:
 		0:
@@ -920,6 +970,8 @@ func _cast_q(c: Color, lv: float, aim: Vector2) -> void:
 	match kit:
 		"acougueiro":
 			hook_throw(aim)
+		"assassina":
+			dagger_throw(aim)
 		"elfo", "barbaro":
 			var r := 3.6
 			play("spin", 1.6, true)
@@ -985,6 +1037,8 @@ func _cast_w(c: Color, lv: float, aim: Vector2) -> void:
 	match kit:
 		"acougueiro":
 			set_rot(not rot_on)
+		"assassina":
+			phantom_strike(aim, c)
 		"elfo":
 			_blink(aim, 6.5, c)
 		"orca":
@@ -1006,6 +1060,17 @@ func _cast_e(c: Color, lv: float) -> void:
 			game.fx.add_aura(self, armor_t, Color(0.95, 0.35, 0.3))
 			game.fx.add_flash(position + Vector3(0, 1.2, 0), 1.6, Color(1.0, 0.45, 0.35), 0.3)
 			game.fx.add_text(position, "ESCUDO DE CARNE!", Color(1, 0.6, 0.5))
+		"assassina":
+			lock_t = 0.2
+			blur_t = BLUR_TIME + 0.25 * lv
+			concealed = blur_hidden()
+			play("cheer", 2.0, true)
+			game.fx.add_flash(position + Vector3(0, 1.0, 0), 1.5, c, 0.35)
+			game.fx.add_ring(position, 1.8, c, 0.5, 1.0)
+			if team == game.player.team:
+				game.fx.add_aura(self, blur_t, c)
+				game.fx.add_text(position, "BORRÃO!", c.lightened(0.3))
+			_as_count("blur")
 		"elfo":
 			armor_t = 4.0
 			hp = min(max_hp, hp + max_hp * 0.08)
@@ -1188,6 +1253,9 @@ func add_xp(v: float) -> void:
 func start_respawn() -> void:
 	retreating = false
 	buff_t = 0
+	strike_t = 0.0
+	blur_t = 0.0
+	next_crit = false
 	ult_t = -1
 	dash_t = 0
 	deaths += 1
@@ -1512,3 +1580,251 @@ func flesh_feed() -> void:
 	dmg += 4
 	game.fx.add_text(position, "PILHA DE CARNE +1", Color(1, 0.75, 0.4))
 	game.fx.add_ring(position, 1.6, Color(1.0, 0.6, 0.3), 0.6, 1.0)
+
+
+# ---------------------------------------------------------------- Assassina Fantasma
+func _as_count(k: String) -> void:
+	if game.autotest:
+		as_stats[k] = as_stats.get(k, 0) + 1
+
+
+## Golpe de Misericórdia (passive, Nv 3+): crit chance on attacks and on the dagger (not on buildings).
+func crit_roll(t) -> bool:
+	if kit != "assassina" or level < CRIT_LEVEL or t == null or not is_instance_valid(t):
+		return false
+	if t.kind == Kind.TOWER or t.kind == Kind.BASE:
+		return false
+	return randf() < CRIT_CHANCE
+
+
+func crit_mult() -> float:
+	return 2.5 + 0.1 * float(maxi(0, level - CRIT_LEVEL))
+
+
+## Imaterial (Borrão's passive): chance to dodge a basic attack.
+func evasion() -> float:
+	return minf(0.30, 0.18 + 0.01 * float(level)) if kit == "assassina" else 0.0
+
+
+## A basic attack (melee hit or attack projectile) landing on t: dodge first, then crit.
+func land_attack(t) -> void:
+	if t == null or not is_instance_valid(t) or t.dead:
+		next_crit = false
+		return
+	var amount: float = dmg
+	var crit := next_crit
+	next_crit = false
+	var ev: float = t.evasion()
+	if ev > 0.0 and randf() < ev:
+		t._as_count("dodge")
+		if t.visible:
+			game.fx.add_text(t.position, "ESQUIVA", DODGE_COL)
+		return
+	if crit:
+		amount *= crit_mult()
+	t.take_damage(amount, self)
+	if crit:
+		_show_crit(t, amount)
+
+
+func _show_crit(t, amount: float) -> void:
+	_as_count("crit")
+	if not t.visible and not visible:
+		return
+	game.fx.add_text(t.position + Vector3(0, 0.5, 0), "%d!" % int(amount), CRIT_COL, 34)
+	game.fx.add_flash(t.position + Vector3(0, t.hit_height, 0), 1.3, CRIT_COL, 0.25)
+
+
+## Unit for a targeted skill: closest to the aim line inside the range, heroes first.
+## allies = also own units (Golpe Fantasma). Hidden enemies (fog, brush, Borrão) are never picked.
+func _pick_unit(aim: Vector2, rng: float, allies: bool):
+	var best = null
+	var bs := INF
+	var me := p2()
+	for o in game.units:
+		if o == self or o.dead or not o.is_mobile():
+			continue
+		var friend: bool = o.team == team
+		if friend and not allies:
+			continue
+		if not friend and not is_valid_target(o):
+			continue
+		var d: Vector2 = o.p2() - me
+		var l: float = d.length() - o.radius
+		if l > rng:
+			continue
+		var ang: float = absf(aim.angle_to(d)) if d.length() > 0.01 else 0.0
+		if ang > 0.75:
+			continue
+		var sc: float = ang * 4.0 + l * 0.12
+		if o.kind == Kind.HERO:
+			sc -= 0.3 if friend else 1.2
+		if friend:
+			sc += 0.6
+		if sc < bs:
+			bs = sc
+			best = o
+	if best == null and not allies:
+		# nothing along the aim: nearest visible enemy (hero first) in range
+		best = game.nearest_enemy_hero(self, rng)
+		if best == null:
+			best = game.find_target(self, rng, true)
+	return best
+
+
+func dagger_damage() -> float:
+	return 60.0 + 15.0 * level
+
+
+## ADAGA: targeted dagger, physical damage (+50% of attack damage) and slow; can crit.
+func dagger_throw(aim: Vector2) -> void:
+	var t = _pick_unit(aim, DAGGER_RANGE, false)
+	if t == null:
+		cds[0] = 0.5
+		if is_player:
+			game.fx.add_text(position, "SEM ALVO", Color(1, 1, 1, 0.8))
+		return
+	face(t.p2() - p2())
+	lock_t = 0.25
+	play("throw", 1.8, true)
+	var from := position + Vector3(facing.x * 0.4, 1.3, facing.y * 0.4)
+	game.fx.add_projectile(from, t, self, dagger_damage(), kit_color().lightened(0.25), 24.0, 0.3, _dagger_hit)
+	_as_count("dagger")
+
+
+func _dagger_hit(t) -> void:
+	if t == null or not is_instance_valid(t) or t.dead:
+		return
+	var atk_part: float = dmg * 0.5
+	var crit := crit_roll(t)
+	if crit:
+		atk_part *= crit_mult()
+	var total: float = dagger_damage() + atk_part
+	t.take_damage(total, self)
+	t.slow(DAGGER_SLOW)
+	if crit:
+		_show_crit(t, total)
+	if t.visible:
+		game.fx.add_spark(t.position + Vector3(0, t.hit_height, 0), kit_color(), 0.8)
+
+
+## GOLPE FANTASMA: blink next to a unit in range (enemy or ally); on an enemy, attack speed burst.
+func phantom_strike(aim: Vector2, c: Color) -> void:
+	# tap = enemy only (nearest along facing / closest); drag = enemy or ally along the drag
+	var t = _pick_unit(aim, STRIKE_RANGE, true) if aim_explicit else null
+	if t == null:
+		t = _pick_unit(aim, STRIKE_RANGE, false)
+	if t == null:
+		cds[1] = 0.5
+		if is_player:
+			game.fx.add_text(position, "SEM ALVO", Color(1, 1, 1, 0.8))
+		return
+	var d: Vector2 = t.p2() - p2()
+	var dir: Vector2 = d.normalized() if d.length() > 0.01 else facing
+	game.fx.add_flash(position + Vector3(0, 1.0, 0), 1.4, c, 0.3)
+	game.fx.add_ring(position, 1.4, c, 0.35, 1.2)
+	# land just past the target (behind it, seen from where we came)
+	var dest: Vector2 = game.clamp_world(t.p2() + dir * (t.radius + radius + 0.1))
+	set_p2(game.push_out(dest, radius))
+	face(t.p2() - p2())
+	game.fx.add_flash(position + Vector3(0, 1.0, 0), 1.6, c, 0.35)
+	game.fx.add_ring(position, 1.6, c, 0.4, 1.4)
+	play("dash", 1.8, true)
+	lock_t = 0.15
+	tp_t = 0.0
+	if t.team != team:
+		strike_t = STRIKE_TIME
+		target = t
+		atk_timer = minf(atk_timer, 0.05)
+		if visible:
+			game.fx.add_text(position, "GOLPE FANTASMA!", c.lightened(0.3))
+	_as_count("strike")
+
+
+## Borrão: hidden from the enemy team while no enemy hero is near and no enemy tower has us in range.
+func blur_hidden() -> bool:
+	if blur_t <= 0 or dead:
+		return false
+	for h in game.heroes:
+		if h.team != team and not h.dead and h.dist_to(self) < BLUR_REVEAL:
+			return false
+	for st in game.structures_of(1 - team):
+		if not st.dead and st.dist_to(self) < st.atk_range + st.radius + 1.0:
+			return false
+	return true
+
+
+## Own team sees a blurred assassin as a ghost (the enemy team doesn't see it at all).
+func set_ghost(on: bool) -> void:
+	ghost_on = on
+	if model == null:
+		return
+	if ghost_meshes.is_empty():
+		ghost_meshes = model.find_children("*", "GeometryInstance3D", true, false)
+	for gi in ghost_meshes:
+		if is_instance_valid(gi):
+			gi.transparency = 0.55 if on else 0.0
+
+
+## Bot assassin in a fight: dagger to poke / slow / finish, strike onto a hero it can beat,
+## Blur to sneak up on a weak hero. Always handles its own skills.
+func assassin_skills(foe) -> bool:
+	if foe != null:
+		var d := dist_to(foe)
+		var winning: bool = foe.hp_frac() < hp_frac() + 0.15 or foe.hp_frac() < 0.45
+		var safe: bool = not game.is_unsafe(self, foe.p2())
+		if cds[2] <= 0 and blur_t <= 0 and d > BLUR_REVEAL + 1.0 and foe.hp_frac() < 0.6 and hp_frac() > 0.5 and safe:
+			cast(2)
+			react_t = 0.3
+			return true
+		if cds[0] <= 0 and d < DAGGER_RANGE and (foe.hp_frac() < 0.6 or d > atk_range + 2.0 or winning):
+			aim_override = (foe.p2() - p2()).normalized()
+			if cast(0):
+				react_t = 0.3
+			return true
+		if cds[1] <= 0 and d > 2.5 and d < STRIKE_RANGE and winning and safe and hp_frac() > 0.35:
+			aim_override = (foe.p2() - p2()).normalized()
+			if cast(1):
+				target = foe
+				react_t = 0.3
+			return true
+		return true
+	# no hero around: dagger a creep whose last hit we would otherwise miss
+	if cds[0] <= 0:
+		for e in game.enemies_near(p2(), team, DAGGER_RANGE):
+			if (e.kind == Kind.CREEP or e.kind == Kind.RANGED) and (e.team != 2 or jungle_camp != null) \
+					and e.hp <= dagger_damage() + dmg * 0.5 and dist_to(e) > atk_range + 2.0 and is_valid_target(e):
+				aim_override = (e.p2() - p2()).normalized()
+				if cast(0):
+					react_t = 0.4
+				return true
+	return true
+
+
+## Bot assassin running home: Blur, dagger the chaser, or strike onto an ally unit closer to home.
+func assassin_escape(foe, home: Vector2) -> void:
+	if foe == null or dist_to(foe) > 9.0:
+		return
+	if cds[2] <= 0 and blur_t <= 0:
+		cast(2)
+		return
+	if cds[0] <= 0 and dist_to(foe) < DAGGER_RANGE:
+		aim_override = (foe.p2() - p2()).normalized()
+		cast(0)
+		return
+	if cds[1] <= 0:
+		var best = null
+		var bd: float = p2().distance_to(home) - 3.0
+		for o in game.units:
+			if o == self or o.dead or o.team != team or not o.is_mobile():
+				continue
+			var od: float = dist_to(o)
+			if od > STRIKE_RANGE or od < 3.0:
+				continue
+			var hd: float = o.p2().distance_to(home)
+			if hd < bd and o.p2().distance_to(foe.p2()) > dist_to(foe):
+				bd = hd
+				best = o
+		if best != null:
+			aim_override = (best.p2() - p2()).normalized()
+			cast(1)

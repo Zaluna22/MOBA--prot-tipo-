@@ -23,7 +23,7 @@ var skill_icons := {}
 var forca_icon: Texture2D
 var passive_icon: Texture2D
 var splash_tex: Texture2D
-const KIT_KEYS := ["elfo", "elfa", "cavaleiro", "orc", "orca", "barbaro", "acougueiro"]
+const KIT_KEYS := ["elfo", "elfa", "cavaleiro", "orc", "orca", "barbaro", "acougueiro", "assassina"]
 var aim_finger := -1
 var aim_skill := -1
 var aim_vec := Vector2.ZERO
@@ -152,7 +152,7 @@ func toggle_shop() -> void:
 const PICK := [["elfo", "Mago arcano", "Dano em área e teleporte"], ["elfa", "Caçadora", "Ataque de longe e flecha que atravessa"],
 	["cavaleiro", "Guardião", "Atordoa, aguenta e cura o time"], ["orc", "Brutamontes", "Terremoto, roubo de vida e esmagar"],
 	["orca", "Xamã", "Raio em cadeia, cura e tempestade"], ["barbaro", "Guerreiro", "Redemoinho, fúria e machado gigante"],
-	["acougueiro", "Tanque caçador", "Gancho puxa inimigo ou aliado"]]
+	["acougueiro", "Tanque caçador", "Gancho puxa inimigo ou aliado"], ["assassina", "Assassina", "Adaga, invisibilidade e crítico"]]
 
 
 func pick_rect(i: int) -> Rect2:
@@ -335,6 +335,12 @@ func auto_aim(i: int) -> void:
 
 func press_skill(i: int) -> void:
 	if game.game_over:
+		return
+	var pl = game.player
+	if pl.skill_passive(i):
+		pressed_flash[i] = 0.15
+		var msg: String = "Passiva: %d%% de chance de crítico x%.1f" % [int(round(Unit.CRIT_CHANCE * 100.0)), pl.crit_mult()] if pl.level >= Unit.CRIT_LEVEL else "Passiva: libera no Nv 3"
+		game.fx.add_text(pl.position, msg, pl.kit_color().lightened(0.3))
 		return
 	auto_aim(i)
 	if game.player.cast(i):
@@ -551,6 +557,9 @@ func _draw_ui() -> void:
 	text(Vector2(bx, by - 8), "%s  Nv %d" % [p.hero_name, p.level], 20, Color(1, 1, 1, 0.95))
 	if p.buff_t > 0:
 		text(Vector2(bx + bw - 120, by - 8), "FÚRIA %ds" % ceil(p.buff_t), 18, Color(1, 0.8, 0.3), HORIZONTAL_ALIGNMENT_RIGHT, 120)
+	elif p.blur_t > 0:
+		var hidden_txt: String = "BORRÃO %ds" % ceil(p.blur_t) if p.concealed else "VISTO! %ds" % ceil(p.blur_t)
+		text(Vector2(bx + bw - 140, by - 8), hidden_txt, 18, p.kit_color().lightened(0.3) if p.concealed else Color(1, 0.55, 0.45), HORIZONTAL_ALIGNMENT_RIGHT, 140)
 	ui.draw_rect(Rect2(bx, by, bw, 16), Color(0.15, 0.05, 0.05))
 	ui.draw_rect(Rect2(bx, by, bw * clamp(p.hp / p.max_hp, 0.0, 1.0), 16), Color(0.3, 0.85, 0.3))
 	text(Vector2(bx, by + 14), "%d / %d" % [p.hp, p.max_hp], 14, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, bw)
@@ -582,6 +591,9 @@ func _draw_ui() -> void:
 		var c := skill_center(i)
 		var col: Color = SKILL_COLORS[i] if i != 0 else p.kit_color()
 		var locked: bool = i == 3 and p.level < 3
+		if p.skill_passive(i):
+			draw_passive_slot(p, i, c, locked)
+			continue
 		ui.draw_circle(c, 52, Color(0.08, 0.08, 0.12, 0.8))
 		ui.draw_circle(c, 46, Color(col.darkened(0.35), 0.95 if not locked else 0.35))
 		var cd: float = p.cds[i]
@@ -657,7 +669,7 @@ func _draw_ui() -> void:
 			var cx := r.position.x + r.size.x / 2
 			var nm: String = game.cfgs["hero_" + PICK[i][0]]["name"]
 			var tx := (r.position.x + pr * 2 + 20 + r.end.x) / 2
-			ctext(Vector2(tx, r.position.y + 34), nm, 28 if nm.length() < 10 else 24, Color.WHITE)
+			ctext(Vector2(tx, r.position.y + 34), nm, 28 if nm.length() < 10 else (24 if nm.length() < 14 else 18), Color.WHITE)
 			ctext(Vector2(tx, r.position.y + 66), PICK[i][1], 17, col.lightened(0.2))
 			ctext(Vector2(cx, r.position.y + 104), PICK[i][2], 14, Color(1, 1, 1, 0.8))
 			var names: Array = Unit.KITS[PICK[i][0]]["names"]
@@ -721,7 +733,11 @@ func draw_world_bars() -> void:
 			continue
 		var sp2 := cam.unproject_position(wp2)
 		var c2: Color = t["c"]
-		ctext(sp2, t["text"], 22, Color(c2, 1.0 - k))
+		var fs: int = t.get("size", 22)
+		if fs > 22:
+			# critical numbers pop: big at once, then shrink a little while they rise
+			fs = int(fs * (1.25 - 0.25 * minf(1.0, k * 3.0)))
+		ctext(sp2, t["text"], fs, Color(c2, 1.0 - k))
 
 
 ## Skill-shot preview while a skill button is dragged: line on the ground + knob.
@@ -744,6 +760,29 @@ func draw_aim(p) -> void:
 	ui.draw_line(a, b, Color(0, 0, 0, 0.35), w + 6)
 	ui.draw_line(a, b, Color(col.lightened(0.3), 0.75 if dragging else 0.35), w)
 	ui.draw_circle(b, w, Color(col.lightened(0.4), 0.9 if dragging else 0.4))
+
+
+## A passive in a skill slot (Assassina's Golpe de Misericórdia): no cooldown, no press;
+## thin double ring, "PASSIVA" tag and the crit chance instead of a cooldown number.
+func draw_passive_slot(p, i: int, c: Vector2, locked: bool) -> void:
+	var col: Color = p.kit_color()
+	ui.draw_circle(c, 52, Color(0.08, 0.08, 0.12, 0.8))
+	tex_circle(c, 46, skill_icons[p.kit][i], Color.WHITE if not locked else Color(0.45, 0.45, 0.45, 0.9))
+	if locked:
+		pie(c, 46, 1.0, Color(0, 0, 0, 0.6))
+		ctext(c + Vector2(0, -6), "Nv 3", 20, Color(1, 1, 1, 0.8))
+	ui.draw_arc(c, 52, 0, TAU, 40, Color(col, 0.35 if locked else 0.75), 2.0)
+	ui.draw_arc(c, 48, 0, TAU, 40, Color(0, 0, 0, 0.5), 1.5)
+	if pressed_flash.has(i):
+		ui.draw_circle(c, 52, Color(1, 1, 1, 0.2))
+	# PASSIVA tag on top, crit chance badge
+	ui.draw_rect(Rect2(c.x - 34, c.y - 58, 68, 17), Color(0.05, 0.05, 0.08, 0.85))
+	ctext(c + Vector2(0, -50), "PASSIVA", 11, Color(col.lightened(0.3), 0.95))
+	if not locked:
+		ui.draw_circle(c + Vector2(36, -30), 15, Color(0.55, 0.08, 0.12, 0.95))
+		ctext(c + Vector2(36, -31), "%d%%" % int(round(Unit.CRIT_CHANCE * 100.0)), 12, Color.WHITE)
+	ui.draw_rect(Rect2(c.x - 46, c.y + 14, 92, 20), Color(0, 0, 0, 0.55))
+	ctext(c + Vector2(0, 26), p.skill_names()[i], 11, Color(1, 1, 1, 0.95))
 
 
 # ---------------------------------------------------------------- loja
