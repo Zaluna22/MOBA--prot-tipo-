@@ -4,6 +4,7 @@ extends Node3D
 
 enum Kind { HERO, CREEP, RANGED, TOWER, BASE }
 
+const Items := preload("res://scripts/items.gd")
 const TEAM_COLORS := [Color(0.3, 0.6, 1.0), Color(1.0, 0.3, 0.22), Color(1.0, 0.82, 0.3)]
 
 var game
@@ -60,7 +61,16 @@ var pending_t := 0.0
 var level := 1
 var xp := 0.0
 var gold := 0.0
-var upgrades := 0
+# --- loja (items)
+var items: Array = [null, null, null, null, null, null]
+var item_ms := 0.0
+var item_as := 0.0
+var item_cdr := 0.0
+var item_ls := 0.0
+var blink_lock := 0.0
+var bkb_t := 0.0
+var potion_t := 0.0
+var tp_t := 0.0
 var cds := [0.0, 0.0, 0.0, 0.0]
 var cd_max := [6.0, 9.0, 15.0, 45.0]
 var respawn_timer := 0.0
@@ -325,20 +335,21 @@ func atk_speed_mult() -> float:
 		m *= 1.35
 	if range_t > 0:
 		m *= 1.3
-	return m
+	return m * (1.0 + item_as)
 
 
 func move_speed() -> float:
 	var m := 1.35 if buff_t > 0 else 1.0
 	if slow_t > 0:
 		m *= 0.55
-	return speed * m
+	return speed * m * (1.0 + item_ms)
 
 
 func stun(t: float) -> void:
-	if kind == Kind.TOWER or kind == Kind.BASE or dead:
+	if kind == Kind.TOWER or kind == Kind.BASE or dead or bkb_t > 0:
 		return
 	stun_t = max(stun_t, t)
+	tp_t = 0.0
 	hook_cancel()
 	dev_t = 0.0
 	if game.fx != null:
@@ -346,7 +357,7 @@ func stun(t: float) -> void:
 
 
 func slow(t: float) -> void:
-	if is_mobile():
+	if is_mobile() and bkb_t <= 0:
 		slow_t = max(slow_t, t)
 
 
@@ -442,6 +453,10 @@ func take_damage(amount: float, src, pure := false) -> void:
 		amount *= 0.6
 	if armor_t > 0 and not pure:
 		amount *= 0.3 if kit == "acougueiro" else 0.5
+	if bkb_t > 0 and not pure:
+		amount *= 0.6
+	if src != null and is_instance_valid(src) and src.kind == Kind.HERO and src.item_ls > 0 and not src.dead:
+		src.hp = min(src.max_hp, src.hp + amount * src.item_ls)
 	if src != null and is_instance_valid(src) and src.kind == Kind.HERO and src.ls_t > 0 and not src.dead:
 		src.hp = min(src.max_hp, src.hp + amount * 0.35)
 	hp -= amount
@@ -454,6 +469,8 @@ func take_damage(amount: float, src, pure := false) -> void:
 					m.target = src
 	if kind == Kind.HERO and src != null and is_instance_valid(src) and src.kind == Kind.HERO:
 		game.call_tower_help(self, src)
+		if src.team != team:
+			Items.on_hero_damage(game, self)
 	if hp <= 0:
 		hp = 0
 		die(src)
@@ -567,6 +584,7 @@ func hero_tick(delta: float) -> void:
 			if a != self and a.team == team and not a.dead and a.dist_to(self) < 6.0:
 				a.hp = min(a.max_hp, a.hp + a.max_hp * 0.04 * delta)
 	hp = min(max_hp, hp + regen * delta)
+	Items.tick(game, self, delta)
 	if p2().distance_to(game.fountain_pos(team)) < game.FOUNTAIN_R:
 		hp = min(max_hp, hp + max_hp * 0.12 * delta)
 	if ult_t >= 0:
@@ -591,6 +609,9 @@ func hero_tick(delta: float) -> void:
 
 func player_ai(delta: float) -> void:
 	if move_input.length() > 0.15:
+		if tp_t > 0:
+			tp_t = 0.0
+			game.fx.add_text(position, "TP cancelado", Color(1, 0.5, 0.5))
 		target = null
 		attack_cmd = false
 		if lock_t <= 0:
@@ -641,9 +662,8 @@ func hp_frac() -> float:
 func bot_ai(delta: float) -> void:
 	var home: Vector2 = game.fountain_pos(team)
 	var dirn := 1.0 if team == 0 else -1.0
-	if gold >= game.upgrade_cost(self) and (randf() < 0.02 or p2().distance_to(home) < game.FOUNTAIN_R):
-		game.buy_upgrade(self)
 	var foe = game.nearest_enemy_hero(self, 12.0)
+	Items.bot_think(game, self, foe)
 	var allies_n: int = game.heroes_near(p2(), team, 11.0)
 	var foes_n: int = game.heroes_near(p2(), 1 - team, 11.0)
 	# --- retreat & regen
@@ -786,7 +806,7 @@ func cast(i: int) -> bool:
 		return false
 	if i == 3 and level < 3:
 		return false
-	cds[i] = cd_max[i]
+	cds[i] = cd_max[i] * (1.0 - item_cdr)
 	var c := kit_color()
 	var lv := float(level)
 	var aim := _aim_dir()
@@ -1133,6 +1153,9 @@ func respawn() -> void:
 	hp = max_hp
 	stun_t = 0.0
 	slow_t = 0.0
+	potion_t = 0.0
+	tp_t = 0.0
+	bkb_t = 0.0
 	set_p2(game.spawn_pos(team))
 	atk_timer = 0
 	add_to_group("units")

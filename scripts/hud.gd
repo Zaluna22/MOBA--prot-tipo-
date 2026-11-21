@@ -2,6 +2,7 @@ extends CanvasLayer
 ## Mobile HUD: floating joystick, attack + 4 skill buttons, bars, minimap, end/rotate screens.
 
 const Unit := preload("res://scripts/unit3d.gd")
+const Items := preload("res://scripts/items.gd")
 const SKILL_NAMES := ["NOVA", "SALTO", "FÚRIA", "METEORO"]
 const SKILL_KEYS := ["1", "2", "3", "4"]
 const SKILL_COLORS := [Color(0.35, 0.7, 1.0), Color(0.55, 1.0, 0.75), Color(1.0, 0.75, 0.25), Color(1.0, 0.45, 0.3)]
@@ -27,6 +28,9 @@ var aim_finger := -1
 var aim_skill := -1
 var aim_vec := Vector2.ZERO
 const AIM_DEAD := 26.0
+var shop_open := false
+var sell_mode := false
+const SHOP_COLS := 4
 
 
 func _ready() -> void:
@@ -93,6 +97,52 @@ func upgrade_rect() -> Rect2:
 	return Rect2(vs().x - 200, 64, 186, 52)
 
 
+# ---- loja layout
+func slot_rect(i: int) -> Rect2:
+	var s := vs()
+	var w := 50.0
+	var gap := 6.0
+	var x0 := s.x / 2 - (w * Items.SLOTS + gap * (Items.SLOTS - 1)) / 2
+	return Rect2(x0 + i * (w + gap), s.y - 58 - 30 - w - 10, w, w)
+
+
+func shop_rect() -> Rect2:
+	var s := vs()
+	var w := minf(820.0, s.x - 120.0)
+	var h := minf(470.0, s.y - 150.0)
+	return Rect2(s.x / 2 - w / 2, 72, w, h)
+
+
+func shop_tile(i: int) -> Rect2:
+	var r := shop_rect()
+	var pad := 14.0
+	var rows := int(ceil(Items.ORDER.size() / float(SHOP_COLS)))
+	var tw := (r.size.x - pad * (SHOP_COLS + 1)) / SHOP_COLS
+	var th := minf(92.0, (r.size.y - 60 - 76 - pad * (rows + 1)) / rows)
+	return Rect2(r.position.x + pad + (i % SHOP_COLS) * (tw + pad), r.position.y + 56 + pad + (i / SHOP_COLS) * (th + pad), tw, th)
+
+
+func shop_slot(i: int) -> Rect2:
+	var r := shop_rect()
+	var w := 54.0
+	return Rect2(r.position.x + 20 + i * (w + 10), r.end.y - w - 16, w, w)
+
+
+func sell_rect() -> Rect2:
+	var r := shop_rect()
+	return Rect2(r.end.x - 300, r.end.y - 66, 130, 50)
+
+
+func close_rect() -> Rect2:
+	var r := shop_rect()
+	return Rect2(r.end.x - 156, r.end.y - 66, 140, 50)
+
+
+func toggle_shop() -> void:
+	shop_open = not shop_open
+	sell_mode = false
+
+
 const PICK := [["elfo", "Mago arcano", "Dano em área e teleporte"], ["elfa", "Caçadora", "Ataque de longe e flecha que atravessa"],
 	["cavaleiro", "Guardião", "Atordoa, aguenta e cura o time"], ["orc", "Brutamontes", "Terremoto, roubo de vida e esmagar"],
 	["orca", "Xamã", "Raio em cadeia, cura e tempestade"], ["barbaro", "Guerreiro", "Redemoinho, fúria e machado gigante"],
@@ -156,7 +206,12 @@ func _input(event: InputEvent) -> void:
 				KEY_3, KEY_R: press_skill(2)
 				KEY_4, KEY_F: press_skill(3)
 				KEY_SPACE: press_attack()
-				KEY_B, KEY_G: game.buy_upgrade(game.player)
+				KEY_B, KEY_G: toggle_shop()
+				KEY_5, KEY_6, KEY_7, KEY_8, KEY_9, KEY_0:
+					var si: int = 5 if k == KEY_0 else k - KEY_5
+					Items.use(game, game.player, si)
+				KEY_ESCAPE:
+					shop_open = false
 
 
 func handle_press(idx: int, p: Vector2) -> void:
@@ -176,6 +231,13 @@ func handle_press(idx: int, p: Vector2) -> void:
 			game.change_hero()
 		return
 	help_time = min(help_time, 1.0)
+	if shop_open and shop_press(p):
+		return
+	for i in Items.SLOTS:
+		if slot_rect(i).grow(4).has_point(p):
+			if Items.use(game, game.player, i):
+				pressed_flash["slot%d" % i] = 0.15
+			return
 	if p.distance_to(atk_center()) < 92:
 		press_attack()
 		return
@@ -190,7 +252,7 @@ func handle_press(idx: int, p: Vector2) -> void:
 				press_skill(i)
 			return
 	if upgrade_rect().grow(10).has_point(p):
-		game.buy_upgrade(game.player)
+		toggle_shop()
 		pressed_flash["up"] = 0.15
 		return
 	if p.x < vs().x * 0.5 and joy_finger == -1:
@@ -198,6 +260,30 @@ func handle_press(idx: int, p: Vector2) -> void:
 		joy_origin = p
 		joy_pos = p
 		update_joy()
+
+
+## Touch inside the open shop panel. Returns true when the press was used by it.
+func shop_press(p: Vector2) -> bool:
+	var pl = game.player
+	if not shop_rect().has_point(p):
+		return false
+	if close_rect().has_point(p):
+		shop_open = false
+		return true
+	if sell_rect().has_point(p):
+		sell_mode = not sell_mode
+		return true
+	for i in Items.SLOTS:
+		if shop_slot(i).has_point(p):
+			if sell_mode and Items.sell(game, pl, i):
+				sell_mode = false
+			return true
+	for i in Items.ORDER.size():
+		if shop_tile(i).has_point(p):
+			if Items.buy(game, pl, Items.ORDER[i]):
+				pressed_flash["shop%d" % i] = 0.15
+			return true
+	return true
 
 
 func update_joy() -> void:
@@ -326,6 +412,10 @@ func _draw_ui() -> void:
 	for c in game.camps:
 		if game.camp_alive(c):
 			ui.draw_circle(mm.position + c["pos"] * k, 3.5, Color(1.0, 0.82, 0.3, 0.9))
+	for w in game.wards:
+		if w["team"] == game.player.team:
+			ui.draw_circle(mm.position + w["pos"] * k, game.WARD_R * k, Color(1.0, 0.9, 0.3, 0.18))
+			ui.draw_circle(mm.position + w["pos"] * k, 3.0, Color(1.0, 0.9, 0.3, 0.95))
 	for u in game.units:
 		if u.dead or u.team == 2:
 			continue
@@ -375,14 +465,16 @@ func _draw_ui() -> void:
 	ui.draw_circle(Vector2(s.x - 176, 34), 11, Color(1.0, 0.8, 0.2))
 	text(Vector2(s.x - 156, 44), "%d" % int(p.gold), 28, Color(1.0, 0.88, 0.35))
 	var ur := upgrade_rect()
-	var cost: int = game.upgrade_cost(p)
-	var can: bool = p.gold >= cost
-	ui.draw_rect(ur, Color(0.55, 0.38, 0.08, 0.9) if can else Color(0.2, 0.2, 0.2, 0.7))
+	var at_shop: bool = Items.near_shop(game, p)
+	ui.draw_rect(ur, Color(0.55, 0.38, 0.08, 0.9) if at_shop or shop_open else Color(0.25, 0.2, 0.12, 0.8))
 	if pressed_flash.has("up"):
 		ui.draw_rect(ur, Color(1, 1, 1, 0.3))
-	ui.draw_rect(ur, Color(1, 0.85, 0.4, 0.8 if can else 0.3), false, 2.0)
-	ui.draw_texture_rect(forca_icon, Rect2(ur.position + Vector2(4, 4), Vector2(44, 44)), false, Color(1, 1, 1, 1.0 if can else 0.45))
-	text(ur.position + Vector2(40, 34), "+FORÇA  %d" % cost, 21, Color(1, 1, 1, 1.0 if can else 0.5), HORIZONTAL_ALIGNMENT_CENTER, ur.size.x - 40)
+	ui.draw_rect(ur, Color(1, 0.85, 0.4, 0.9 if at_shop else 0.45), false, 2.0)
+	ui.draw_texture_rect(forca_icon, Rect2(ur.position + Vector2(4, 4), Vector2(44, 44)), false)
+	text(ur.position + Vector2(40, 34), "LOJA", 24, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, ur.size.x - 40)
+	if at_shop and not shop_open and int(game.game_time * 2.0) % 2 == 0:
+		ui.draw_rect(ur.grow(3), Color(1, 0.9, 0.4, 0.7), false, 2.0)
+	draw_item_slots(p)
 	# --- bottom center: player hp + xp
 	var bw := minf(420.0, s.x * 0.34)
 	var bx := s.x / 2 - bw / 2
@@ -464,6 +556,8 @@ func _draw_ui() -> void:
 		ctext(Vector2(s.x / 2, s.y * 0.62 - 22), "Joystick à esquerda para mover. ATACAR mira o inimigo mais perto.", 18, Color(1, 1, 1, a))
 		ctext(Vector2(s.x / 2, s.y * 0.62 + 8), "%s: %s (a última no Nv 3)." % [p.hero_name, ", ".join(p.skill_names())], 18, Color(1, 1, 1, a))
 		ctext(Vector2(s.x / 2, s.y * 0.62 + 34), "Selva: pontos amarelos dão ouro e XP. Destrua o castelo vermelho!", 18, Color(1, 0.85, 0.4, a))
+	if shop_open and not end_visible:
+		draw_shop(p)
 	flush_text()
 	# --- end screen
 	if end_visible:
@@ -584,3 +678,81 @@ func draw_aim(p) -> void:
 	ui.draw_line(a, b, Color(0, 0, 0, 0.35), w + 6)
 	ui.draw_line(a, b, Color(col.lightened(0.3), 0.75 if dragging else 0.35), w)
 	ui.draw_circle(b, w, Color(col.lightened(0.4), 0.9 if dragging else 0.4))
+
+
+# ---------------------------------------------------------------- loja
+func item_box(r: Rect2, e, p, flash := false) -> void:
+	ui.draw_rect(r, Color(0.06, 0.06, 0.09, 0.85))
+	if e == null:
+		ui.draw_rect(r, Color(1, 1, 1, 0.18), false, 1.5)
+		return
+	var it: Dictionary = Items.ITEMS[e["id"]]
+	var col: Color = it["col"]
+	ui.draw_rect(r.grow(-3), Color(col.darkened(0.3), 0.95))
+	ctext(r.get_center() + Vector2(0, -2), it["short"], 16 if r.size.x < 60 else 20, Color.WHITE)
+	if it.get("consumable", false):
+		text(r.position + Vector2(0, r.size.y - 4), str(e["n"]), 14, Color(1, 1, 0.8), HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 4)
+	var cd: float = e["cd"]
+	if e["id"] == "blink" and p.blink_lock > cd:
+		cd = p.blink_lock
+	if cd > 0:
+		ui.draw_rect(r.grow(-3), Color(0, 0, 0, 0.6))
+		ctext(r.get_center(), str(int(ceil(cd))), 20, Color.WHITE)
+	ui.draw_rect(r, Color(col.lightened(0.3), 0.9) if it.get("active", false) else Color(1, 1, 1, 0.35), false, 2.0)
+	if flash:
+		ui.draw_rect(r, Color(1, 1, 1, 0.35))
+
+
+func draw_item_slots(p) -> void:
+	for i in Items.SLOTS:
+		item_box(slot_rect(i), p.items[i], p, pressed_flash.has("slot%d" % i))
+	if p.tp_t > 0:
+		var r := slot_rect(0)
+		ctext(Vector2(vs().x / 2, r.position.y - 18), "Teleportando... %.1fs" % p.tp_t, 18, Color(0.6, 0.85, 1.0))
+
+
+func draw_shop(p) -> void:
+	var r := shop_rect()
+	var at_shop: bool = Items.near_shop(game, p)
+	ui.draw_rect(r, Color(0.05, 0.06, 0.09, 0.93))
+	ui.draw_rect(r, Color(1, 0.85, 0.4, 0.7), false, 3.0)
+	text(r.position + Vector2(20, 40), "LOJA", 30, Color(1, 0.88, 0.45))
+	ui.draw_circle(r.position + Vector2(130, 30), 9, Color(1.0, 0.8, 0.2))
+	text(r.position + Vector2(146, 40), "%d" % int(p.gold), 24, Color(1.0, 0.88, 0.35))
+	if not at_shop:
+		text(r.position + Vector2(220, 38), "Volte à base para comprar", 18, Color(1, 0.55, 0.5))
+	for i in Items.ORDER.size():
+		var id: String = Items.ORDER[i]
+		var it: Dictionary = Items.ITEMS[id]
+		var tr := shop_tile(i)
+		var why: String = Items.buy_block(game, p, id)
+		var ok := why == ""
+		var col: Color = it["col"]
+		ui.draw_rect(tr, Color(0.12, 0.12, 0.16, 0.95))
+		ui.draw_rect(Rect2(tr.position, Vector2(6, tr.size.y)), col)
+		var ib := Rect2(tr.position + Vector2(12, 10), Vector2(44, 44))
+		ui.draw_rect(ib, Color(col.darkened(0.3), 1.0 if ok else 0.5))
+		ctext(ib.get_center(), it["short"], 15, Color(1, 1, 1, 1.0 if ok else 0.6))
+		text(tr.position + Vector2(64, 26), it["name"], 15, Color(1, 1, 1, 1.0 if ok else 0.6), HORIZONTAL_ALIGNMENT_LEFT, tr.size.x - 70)
+		text(tr.position + Vector2(64, 48), "%d" % it["cost"], 17, Color(1, 0.85, 0.35) if p.gold >= it["cost"] else Color(0.8, 0.4, 0.35))
+		if why != "" and why != "ouro" and why != "volte à base":
+			text(tr.position + Vector2(64, 48), why, 14, Color(1, 1, 1, 0.6), HORIZONTAL_ALIGNMENT_RIGHT, tr.size.x - 76)
+		text(tr.position + Vector2(12, tr.size.y - 10), it["desc"], 12, Color(1, 1, 1, 0.7), HORIZONTAL_ALIGNMENT_LEFT, tr.size.x - 20)
+		ui.draw_rect(tr, Color(col, 0.8 if ok else 0.25), false, 2.0)
+		if pressed_flash.has("shop%d" % i):
+			ui.draw_rect(tr, Color(1, 1, 1, 0.3))
+	for i in Items.SLOTS:
+		var sr := shop_slot(i)
+		item_box(sr, p.items[i], p)
+		if sell_mode and p.items[i] != null:
+			ui.draw_rect(sr.grow(2), Color(1, 0.4, 0.35, 0.9), false, 2.5)
+			var e = p.items[i]
+			ctext(sr.get_center() + Vector2(0, -sr.size.y / 2 - 10), "+%d" % (int(Items.ITEMS[e["id"]]["cost"] * Items.SELL_BACK) * e["n"]), 13, Color(1, 0.85, 0.35))
+	var vr := sell_rect()
+	ui.draw_rect(vr, Color(0.6, 0.2, 0.15, 0.95) if sell_mode else Color(0.25, 0.25, 0.3, 0.95))
+	ui.draw_rect(vr, Color(1, 1, 1, 0.6), false, 2.0)
+	ctext(vr.get_center(), "VENDER" if not sell_mode else "toque item", 18, Color.WHITE)
+	var cr := close_rect()
+	ui.draw_rect(cr, Color(0.2, 0.35, 0.6, 0.95))
+	ui.draw_rect(cr, Color(1, 1, 1, 0.7), false, 2.0)
+	ctext(cr.get_center(), "FECHAR", 20, Color.WHITE)
