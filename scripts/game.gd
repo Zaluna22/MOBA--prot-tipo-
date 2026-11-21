@@ -248,6 +248,7 @@ func make_unit(kind: int, team: int, pos: Vector2, is_player := false, key := ""
 		var r = creep_pool[key].pop_back()
 		r.position = Vector3(pos.x, 0, pos.y)
 		r.reset_creep()
+		init_vis(r)
 		return r
 	var u = Unit.new()
 	u.game = self
@@ -259,6 +260,7 @@ func make_unit(kind: int, team: int, pos: Vector2, is_player := false, key := ""
 	add_child(u)
 	u.setup(cfgs[key])
 	u.add_to_group("units")
+	init_vis(u)
 	if kind == Unit.Kind.TOWER or kind == Unit.Kind.BASE:
 		u.model.rotation.y = PI / 6.0
 	return u
@@ -538,6 +540,7 @@ func build_world() -> void:
 		fm.position = Vector3(FOUNTAIN_POS[team].x, 0.04, FOUNTAIN_POS[team].y)
 		add_child(fm)
 	build_brushes()
+	setup_fog()
 	scatter_props()
 	art.build_decor()
 	art.build_blobs()
@@ -703,9 +706,6 @@ func update_brushes(delta: float) -> void:
 		var b := -1 if h.dead else brush_of(h.p2())
 		h.in_brush = b
 		h.concealed = b >= 0 and h.reveal_t <= 0.0 and not occ.has(b * 3 + (1 - h.team))
-		var show: bool = h.team == player.team or not h.concealed
-		if h.visible != show and not h.dead:
-			h.visible = show
 
 
 func scatter_props() -> void:
@@ -800,6 +800,11 @@ func _physics_process(delta: float) -> void:
 			if o.lane >= 0 and o.team < 2 and (o.kind == Unit.Kind.CREEP or o.kind == Unit.Kind.RANGED):
 				cc[o.team][o.lane] += 1
 		print("   creeps per lane blue=%s red=%s" % [str(cc[0]), str(cc[1])])
+		var seen := [0, 0]
+		for o in units:
+			if not o.dead and o.team != 0:
+				seen[1 if o.vis[0] else 0] += 1
+		print("   fog: enemy/neutral units hidden=%d visible=%d" % seen)
 		if game_time > 2400:
 			print("TIMEOUT")
 			get_tree().quit()
@@ -812,6 +817,10 @@ func _process(delta: float) -> void:
 	update_camera(delta)
 	if heroes.size() > 0 and player != null:
 		update_brushes(delta)
+		var tf := Time.get_ticks_usec()
+		update_fog(delta)
+		if autotest:
+			prof["fog"] = prof.get("fog", 0) + Time.get_ticks_usec() - tf
 	var keep: Array = []
 	for t in hud_texts:
 		t["t"] += delta
@@ -969,7 +978,7 @@ func separation() -> void:
 func hostile(u, o) -> bool:
 	if o.team == u.team:
 		return false
-	if o.concealed and o.kind == Unit.Kind.HERO:
+	if u.team < 2 and not o.vis[u.team]:
 		return false
 	if o.team == 2 or u.team == 2:
 		return u.kind == Unit.Kind.HERO or o.kind == Unit.Kind.HERO
@@ -1014,7 +1023,7 @@ func nearest_enemy_hero(u, r: float):
 	var best = null
 	var bd := r
 	for h in heroes:
-		if h.team == u.team or h.dead or h.concealed:
+		if h.team == u.team or h.dead or (u.team < 2 and not h.vis[u.team]):
 			continue
 		var d: float = u.dist_to(h)
 		if d < bd:
@@ -1478,3 +1487,162 @@ func merge_skinned(model: Node3D, cfg: Dictionary) -> void:
 	for i in range(1, parts.size()):
 		parts[i].get_parent().remove_child(parts[i])
 		parts[i].free()
+
+
+# ---------------------------------------------------------------- fog of war
+## Each team sees only around its own units, buildings and wards (Dota-style).
+## Grid of 2 m cells; recomputed every 0.1 s. Tall grass still hides heroes inside it.
+const FOG_RES := 70
+const FOG_CELL := MAP / FOG_RES
+const VISION := {0: 12.0, 1: 8.0, 2: 8.0, 3: 12.0, 4: 14.0}  # by Unit.Kind
+const WARD_VISION := 14.0
+const FOUNTAIN_VISION := 16.0
+var fog_grid: Array = [PackedByteArray(), PackedByteArray()]
+var fog_bytes := PackedByteArray()
+var fog_img: Image
+var fog_tex: ImageTexture  # minimap overlay (LA8), refreshed every 0.5 s
+var fog_cur: ImageTexture  # 3D overlay: raw 0/1 grid (L8), blended with the previous one
+var fog_prev: ImageTexture
+var fog_mat: ShaderMaterial
+var fog_blend := 1.0
+var fog_mm_t := 0.0
+var fog_last := PackedByteArray()
+var fog_t := 0.0
+var fog_off := false
+var fog_stamps := {}
+
+
+func init_vis(u) -> void:
+	var always: bool = u.kind == Unit.Kind.TOWER or u.kind == Unit.Kind.BASE
+	u.vis = [always or u.team == 0, always or u.team == 1]
+	if player != null and u.team != player.team and not always and not fog_off:
+		u.visible = false
+
+
+func setup_fog() -> void:
+	fog_off = "--nofog" in OS.get_cmdline_user_args()
+	var n := FOG_RES * FOG_RES
+	for t in 2:
+		fog_grid[t].resize(n)
+	fog_last.resize(n)
+	fog_bytes.resize(n * 2)
+	for i in n:
+		fog_bytes[i * 2] = 0
+		fog_bytes[i * 2 + 1] = 255
+	fog_img = Image.create_from_data(FOG_RES, FOG_RES, false, Image.FORMAT_LA8, fog_bytes)
+	fog_tex = ImageTexture.create_from_image(fog_img)
+	var blank := Image.create(FOG_RES, FOG_RES, false, Image.FORMAT_L8)
+	fog_cur = ImageTexture.create_from_image(blank)
+	fog_prev = ImageTexture.create_from_image(blank)
+	if fog_off:
+		return
+	var mi := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(MAP, MAP)
+	mi.mesh = pm
+	mi.position = Vector3(MAP / 2.0, 1.0, MAP / 2.0)
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var sh := Shader.new()
+	sh.code = """shader_type spatial;
+render_mode unshaded, cull_disabled, depth_draw_never, blend_mix;
+uniform sampler2D fog_now : filter_linear, repeat_disable;
+uniform sampler2D fog_old : filter_linear, repeat_disable;
+uniform float blend = 1.0;
+void fragment() {
+	float v0 = clamp(texture(fog_old, UV).r * 255.0, 0.0, 1.0);
+	float v1 = clamp(texture(fog_now, UV).r * 255.0, 0.0, 1.0);
+	float f = 1.0 - smoothstep(0.15, 0.85, mix(v0, v1, blend));
+	ALBEDO = vec3(0.02, 0.03, 0.07);
+	ALPHA = f * 0.62;
+}"""
+	var mat := ShaderMaterial.new()
+	mat.shader = sh
+	mat.set_shader_parameter("fog_now", fog_cur)
+	mat.set_shader_parameter("fog_old", fog_prev)
+	fog_mat = mat
+	mi.material_override = mat
+	add_child(mi)
+
+
+func fog_stamp(r: float) -> PackedInt32Array:
+	var rc := int(ceil(r / FOG_CELL))
+	if fog_stamps.has(rc):
+		return fog_stamps[rc]
+	var out := PackedInt32Array()
+	var lim := (r / FOG_CELL) * (r / FOG_CELL)
+	for dy in range(-rc, rc + 1):
+		for dx in range(-rc, rc + 1):
+			if dx * dx + dy * dy <= lim:
+				out.append(dx)
+				out.append(dy)
+	fog_stamps[rc] = out
+	return out
+
+
+func fog_paint(t: int, p: Vector2, r: float) -> void:
+	var cx := int(p.x / FOG_CELL)
+	var cy := int(p.y / FOG_CELL)
+	var st := fog_stamp(r)
+	var g: PackedByteArray = fog_grid[t]
+	for i in range(0, st.size(), 2):
+		var x := cx + st[i]
+		var y := cy + st[i + 1]
+		if x >= 0 and y >= 0 and x < FOG_RES and y < FOG_RES:
+			g[y * FOG_RES + x] = 1
+	fog_grid[t] = g
+
+
+func fog_cell(p: Vector2) -> int:
+	return clampi(int(p.y / FOG_CELL), 0, FOG_RES - 1) * FOG_RES + clampi(int(p.x / FOG_CELL), 0, FOG_RES - 1)
+
+
+func team_sees(t: int, p: Vector2) -> bool:
+	return fog_off or fog_grid[t][fog_cell(p)] == 1
+
+
+func update_fog(delta: float) -> void:
+	if fog_mat != null and fog_blend < 1.0:
+		fog_blend = minf(1.0, fog_blend + delta / 0.15)
+		fog_mat.set_shader_parameter("blend", fog_blend)
+	fog_t -= delta
+	if fog_t > 0:
+		return
+	fog_t = 0.15
+	for t in 2:
+		fog_grid[t].fill(0)
+		fog_paint(t, FOUNTAIN_POS[t], FOUNTAIN_VISION)
+	for o in units:
+		if o.dead or o.team > 1:
+			continue
+		fog_paint(o.team, o.p2(), VISION.get(o.kind, 8.0))
+	for w in wards:
+		fog_paint(w["team"], w["pos"], WARD_VISION)
+	var pt: int = player.team
+	for o in units:
+		if o.dead:
+			continue
+		var c := fog_cell(o.p2())
+		var structure: bool = o.kind == Unit.Kind.TOWER or o.kind == Unit.Kind.BASE
+		for t in 2:
+			if o.team == t or structure or fog_off:
+				o.vis[t] = true
+			else:
+				o.vis[t] = fog_grid[t][c] == 1 and not (o.kind == Unit.Kind.HERO and o.concealed and o.team < 2)
+		if o.team != pt:
+			var show: bool = o.vis[pt]
+			if o.visible != show:
+				o.visible = show
+	if fog_off:
+		return
+	var g: PackedByteArray = fog_grid[pt]
+	fog_prev.update(Image.create_from_data(FOG_RES, FOG_RES, false, Image.FORMAT_L8, fog_last))
+	fog_cur.update(Image.create_from_data(FOG_RES, FOG_RES, false, Image.FORMAT_L8, g))
+	fog_last = g.duplicate()
+	fog_blend = 0.0
+	fog_mm_t -= 0.15
+	if fog_mm_t <= 0.0:
+		fog_mm_t = 0.5
+		for i in g.size():
+			fog_bytes[i * 2 + 1] = 0 if g[i] == 1 else 255
+		fog_img.set_data(FOG_RES, FOG_RES, false, Image.FORMAT_LA8, fog_bytes)
+		fog_tex.update(fog_img)

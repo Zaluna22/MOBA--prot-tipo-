@@ -425,8 +425,10 @@ func _draw_ui() -> void:
 		if w["team"] == game.player.team:
 			ui.draw_circle(mm.position + w["pos"] * k, game.WARD_R * k, Color(1.0, 0.9, 0.3, 0.18))
 			ui.draw_circle(mm.position + w["pos"] * k, 3.0, Color(1.0, 0.9, 0.3, 0.95))
+	if not game.fog_off:
+		ui.draw_texture_rect(game.fog_tex, mm, false, Color(1, 1, 1, 0.7))
 	for u in game.units:
-		if u.dead or u.team == 2:
+		if u.dead or u.team == 2 or not u.vis[p.team]:
 			continue
 		var q: Vector2 = mm.position + u.p2() * k
 		var c: Color = u.team_color()
@@ -438,7 +440,7 @@ func _draw_ui() -> void:
 			_:
 				ui.draw_rect(Rect2(q - Vector2(1.5, 1.5), Vector2(3, 3)), c)
 	for h in game.heroes:
-		if h.dead or (h.concealed and h.team != game.player.team):
+		if h.dead or not h.vis[game.player.team]:
 			continue
 		var q: Vector2 = mm.position + h.p2() * k
 		ui.draw_circle(q, 6.5 if h.is_player else 5.5, Color.WHITE if h.is_player else Color.BLACK)

@@ -11,6 +11,7 @@ var game
 var team := 0
 var in_brush := -1
 var concealed := false
+var vis := [true, true]  # seen by team 0 / team 1 (fog of war)
 var reveal_t := 0.0
 var kind := Kind.CREEP
 var max_hp := 100.0
@@ -324,7 +325,7 @@ func is_mobile() -> bool:
 
 
 func is_valid_target(t) -> bool:
-	return t != null and is_instance_valid(t) and not t.dead and t.team != team and not t.invulnerable and not (t.concealed and t.kind == Kind.HERO)
+	return t != null and is_instance_valid(t) and not t.dead and t.team != team and not t.invulnerable and (team > 1 or t.vis[team])
 
 
 func atk_speed_mult() -> float:

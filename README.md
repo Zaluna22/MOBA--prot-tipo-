@@ -46,3 +46,8 @@ Botão LOJA no canto superior direito (substitui o +FORÇA). Só compra/vende pe
 | Satânico | 1700 | +20 dano, 20% roubo de vida |
 
 Bots compram seguindo uma rota (à distância / corpo a corpo) e usam Poção e BKB.
+
+## Névoa de guerra (v0.6.0)
+Cada time só vê ao redor das próprias unidades: herói 12 m, creeps 8 m, torres 12 m, base 14 m, Sentinela 14 m e a fonte 16 m.
+Fora disso o mapa escurece, inimigos e acampamentos neutros somem (tela e minimapa) e ninguém pode mirar neles, inclusive os bots.
+Torres e bases inimigas continuam visíveis. O mato alto continua escondendo heróis. Para testar sem névoa: `--nofog`.
